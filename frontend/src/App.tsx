@@ -93,11 +93,14 @@ export default function App() {
             c.id === convId ? { ...c, messages: [...c.messages, botMsg] } : c
           )
         );
-      } catch {
+      } catch (err) {
+        const message = err instanceof Error
+          ? err.message
+          : "Đã xảy ra lỗi không xác định.";
         const errMsg: Message = {
           id: makeId(),
           role: "assistant",
-          content: "⚠️ Không thể kết nối đến server. Vui lòng thử lại sau.",
+          content: `⚠️ **Lỗi:** ${message}`,
           timestamp: new Date(),
         };
         setConversations((prev) =>

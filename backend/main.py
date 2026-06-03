@@ -4,7 +4,9 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from routers import chat
+from routers import booking as booking_router
 from services.chatbot import detect_provider
+from database import init_db
 
 load_dotenv()
 
@@ -12,6 +14,9 @@ app = FastAPI(
     title="Day5-6-Lap--Hackthon-Travel Chatbot API",
     version="1.0.0",
 )
+
+# Initialise SQLite database on startup
+init_db()
 
 origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
@@ -24,6 +29,7 @@ app.add_middleware(
 )
 
 app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
+app.include_router(booking_router.router)
 
 
 @app.get("/health")
