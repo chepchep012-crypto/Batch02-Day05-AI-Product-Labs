@@ -4,6 +4,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 
 from routers import chat
+from services.chatbot import detect_provider
 
 load_dotenv()
 
@@ -27,4 +28,17 @@ app.include_router(chat.router, prefix="/api/chat", tags=["chat"])
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "Travel Chatbot API"}
+    provider = detect_provider()
+    models = {
+        "openai": os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
+        "gemini": os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+        "claude": os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307"),
+        "openrouter": os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo"),
+        "ollama": os.getenv("OLLAMA_MODEL", "llama3"),
+    }
+    return {
+        "status": "ok",
+        "service": "Travel Chatbot API",
+        "ai_provider": provider,
+        "model": models.get(provider, "unknown"),
+    }

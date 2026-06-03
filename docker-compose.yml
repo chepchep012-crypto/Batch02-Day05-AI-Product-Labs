@@ -1,6 +1,26 @@
 version: "3.9"
 
 services:
+  db:
+    image: postgres:16-alpine
+    container_name: travel-chatbot-db
+    environment:
+      - POSTGRES_USER=${POSTGRES_USER:-chatbot}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chatbot123}
+      - POSTGRES_DB=${POSTGRES_DB:-chatbot_db}
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+    networks:
+      - chatbot-network
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-chatbot} -d ${POSTGRES_DB:-chatbot_db}"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
   backend:
     build:
       context: ./backend
@@ -11,8 +31,12 @@ services:
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
       - CORS_ORIGINS=http://localhost:3000
+      - DATABASE_URL=postgresql://${POSTGRES_USER:-chatbot}:${POSTGRES_PASSWORD:-chatbot123}@db:5432/${POSTGRES_DB:-chatbot_db}
     volumes:
       - ./backend:/app
+    depends_on:
+      db:
+        condition: service_healthy
     networks:
       - chatbot-network
     restart: unless-stopped
@@ -35,3 +59,6 @@ services:
 networks:
   chatbot-network:
     driver: bridge
+
+volumes:
+  postgres_data:

@@ -1,4 +1,4 @@
-import { useState, useCallback } from "react";
+import { useState, useCallback, useRef } from "react";
 import { Conversation, Message } from "./types";
 import Sidebar from "./components/Sidebar";
 import ChatWindow from "./components/ChatWindow";
@@ -23,9 +23,19 @@ export default function App() {
   const [loading, setLoading] = useState(false);
   const [sidebarOpen, setSidebarOpen] = useState(true);
 
+  // Ref luôn giữ giá trị mới nhất của activeId — tránh stale closure trong handleSend
+  const activeIdRef = useRef<string | null>(null);
+  activeIdRef.current = activeId;
+
+  // Ref giữ conversations mới nhất để lấy history chính xác
+  const conversationsRef = useRef<Conversation[]>([]);
+  conversationsRef.current = conversations;
+
   const activeConv = conversations.find((c) => c.id === activeId) ?? null;
 
   function handleNew() {
+    // Nếu conversation hiện tại chưa có tin nhắn nào thì không tạo thêm
+    if (activeConv && activeConv.messages.length === 0) return;
     const c = newConversation();
     setConversations((prev) => [c, ...prev]);
     setActiveId(c.id);
@@ -33,12 +43,14 @@ export default function App() {
 
   const handleSend = useCallback(
     async (text: string) => {
-      let convId = activeId;
+      // Dùng ref để luôn có activeId mới nhất, tránh tạo conversation thừa
+      let convId = activeIdRef.current;
 
       // Auto-create conversation if none active
       if (!convId) {
         const c = newConversation();
         convId = c.id;
+        activeIdRef.current = convId; // cập nhật ref ngay lập tức
         setConversations((prev) => [c, ...prev]);
         setActiveId(convId);
       }
@@ -64,7 +76,8 @@ export default function App() {
       setLoading(true);
 
       try {
-        const currentConv = conversations.find((c) => c.id === convId);
+        // Dùng conversationsRef để lấy history mới nhất, không bị stale
+        const currentConv = conversationsRef.current.find((c) => c.id === convId);
         const history = [...(currentConv?.messages ?? []), userMsg];
         const reply = await sendMessage(history);
 
@@ -96,64 +109,66 @@ export default function App() {
         setLoading(false);
       }
     },
-    [activeId, conversations]
+    [] // không cần deps vì dùng ref
   );
 
   return (
-    <div className="flex h-screen overflow-hidden bg-gray-100">
-      {/* Sidebar toggle button (mobile) */}
-      <button
-        onClick={() => setSidebarOpen((s) => !s)}
-        className="absolute top-3 left-3 z-50 md:hidden bg-gray-800 text-white rounded-lg p-2"
-      >
-        ☰
-      </button>
+    <div className="flex flex-col h-screen bg-white overflow-hidden">
 
-      {/* Sidebar */}
-      <div
-        className={`${
-          sidebarOpen ? "flex" : "hidden"
-        } md:flex flex-shrink-0`}
-      >
-        <Sidebar
-          conversations={conversations}
-          activeId={activeId}
-          onSelect={setActiveId}
-          onNew={handleNew}
-        />
-      </div>
+      {/* ── Drawer overlay ── */}
+      {sidebarOpen && (
+        <div className="drawer-overlay" onClick={() => setSidebarOpen(false)} />
+      )}
 
-      {/* Main chat area */}
-      <div className="flex-1 flex flex-col min-w-0 bg-gray-50">
-        {/* Top bar */}
-        <div className="bg-white border-b border-gray-200 px-4 py-3 flex items-center gap-3 shadow-sm">
-          <button
-            onClick={() => setSidebarOpen((s) => !s)}
-            className="hidden md:flex text-gray-500 hover:text-gray-700"
-          >
-            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
-              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 6h16M4 12h16M4 18h16" />
-            </svg>
-          </button>
-          <div>
-            <h2 className="font-semibold text-gray-800 text-sm">
-              {activeConv ? activeConv.title : "TravelBot – AI Du Lịch"}
-            </h2>
-            <p className="text-xs text-green-500 flex items-center gap-1">
-              <span className="w-1.5 h-1.5 rounded-full bg-green-500 inline-block" />
-              Đang hoạt động
-            </p>
-          </div>
-        </div>
-
-        {/* Chat window */}
-        <div className="flex-1 overflow-hidden">
-          <ChatWindow
-            messages={activeConv?.messages ?? []}
-            loading={loading}
-            onSend={handleSend}
+      {/* ── Slide-out conversation drawer ── */}
+      {sidebarOpen && (
+        <div className="drawer">
+          <Sidebar
+            conversations={conversations}
+            activeId={activeId}
+            onSelect={(id) => { setActiveId(id); setSidebarOpen(false); }}
+            onNew={() => { handleNew(); setSidebarOpen(false); }}
           />
         </div>
+      )}
+
+      {/* ── Top navbar ── */}
+      <header className="flex items-center justify-between px-4 py-3 border-b border-gray-100 bg-white flex-shrink-0">
+        {/* Left: hamburger + logo */}
+        <div className="flex items-center gap-3">
+          <button
+            onClick={() => setSidebarOpen(true)}
+            className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
+            title="Lịch sử hội thoại"
+          >
+            <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M4 6h16M4 12h16M4 18h7" />
+            </svg>
+          </button>
+          <span className="font-semibold text-gray-900 text-base tracking-tight">
+            ✈️ TravelBot
+          </span>
+        </div>
+
+        {/* Right: new chat */}
+        <button
+          onClick={handleNew}
+          className="w-8 h-8 flex items-center justify-center rounded-lg text-gray-500 hover:bg-gray-100 transition-colors"
+          title="Cuộc hội thoại mới"
+        >
+          <svg className="w-5 h-5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={1.8} d="M12 4v16m8-8H4" />
+          </svg>
+        </button>
+      </header>
+
+      {/* ── Chat area ── */}
+      <div className="flex-1 overflow-hidden">
+        <ChatWindow
+          messages={activeConv?.messages ?? []}
+          loading={loading}
+          onSend={handleSend}
+        />
       </div>
     </div>
   );

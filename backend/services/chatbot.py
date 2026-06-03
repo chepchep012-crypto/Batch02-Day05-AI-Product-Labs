@@ -2,7 +2,11 @@ import os
 from typing import List, Dict
 
 # ---------------------------------------------------------------------------
-# Try to use OpenAI; fall back to a built-in rule-based travel assistant
+# Multi-provider AI backend
+# Supported: openai | gemini | claude | openrouter | ollama
+#
+# Auto-detection order (if AI_PROVIDER not set):
+#   OPENAI_API_KEY → GEMINI_API_KEY → CLAUDE_API_KEY → OPENROUTER_API_KEY → ollama
 # ---------------------------------------------------------------------------
 
 SYSTEM_PROMPT = """You are TravelBot, an expert AI travel assistant for the 
@@ -26,12 +30,110 @@ FALLBACK_RESPONSES = {
 }
 
 
+# ---------------------------------------------------------------------------
+# Provider detection
+# ---------------------------------------------------------------------------
+
+def detect_provider() -> str:
+    """Return the active provider name."""
+    explicit = os.getenv("AI_PROVIDER", "").lower().strip()
+    if explicit in ("openai", "gemini", "claude", "openrouter", "ollama"):
+        return explicit
+    # Auto-detect by available keys
+    if os.getenv("OPENAI_API_KEY", "").strip():
+        return "openai"
+    if os.getenv("GEMINI_API_KEY", "").strip():
+        return "gemini"
+    if os.getenv("CLAUDE_API_KEY", "").strip():
+        return "claude"
+    if os.getenv("OPENROUTER_API_KEY", "").strip():
+        return "openrouter"
+    return "ollama"  # default: local Ollama
+
+
+# ---------------------------------------------------------------------------
+# Provider implementations
+# ---------------------------------------------------------------------------
+
+async def _call_openai_compat(
+    history: List[Dict[str, str]],
+    api_key: str,
+    model: str,
+    base_url: str | None = None,
+) -> str:
+    """OpenAI / OpenRouter / Ollama — all share the same OpenAI-compatible API."""
+    from openai import AsyncOpenAI
+
+    kwargs: dict = {"api_key": api_key}
+    if base_url:
+        kwargs["base_url"] = base_url
+
+    client = AsyncOpenAI(**kwargs)
+    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    response = await client.chat.completions.create(
+        model=model,
+        messages=messages,
+        max_tokens=800,
+        temperature=0.7,
+    )
+    return response.choices[0].message.content.strip()
+
+
+async def _call_gemini(
+    history: List[Dict[str, str]],
+    api_key: str,
+    model: str,
+) -> str:
+    """Google Gemini via google-generativeai SDK."""
+    import google.generativeai as genai
+
+    genai.configure(api_key=api_key)
+
+    # Convert history → Gemini format (all except last message)
+    gemini_history = []
+    for msg in history[:-1]:
+        role = "user" if msg["role"] == "user" else "model"
+        gemini_history.append({"role": role, "parts": [msg["content"]]})
+
+    last_message = history[-1]["content"] if history else ""
+
+    gemini_model = genai.GenerativeModel(
+        model_name=model,
+        system_instruction=SYSTEM_PROMPT,
+    )
+    chat = gemini_model.start_chat(history=gemini_history)
+    response = await chat.send_message_async(last_message)
+    return response.text.strip()
+
+
+async def _call_claude(
+    history: List[Dict[str, str]],
+    api_key: str,
+    model: str,
+) -> str:
+    """Anthropic Claude via anthropic SDK."""
+    from anthropic import AsyncAnthropic
+
+    client = AsyncAnthropic(api_key=api_key)
+    messages = [{"role": m["role"], "content": m["content"]} for m in history]
+    response = await client.messages.create(
+        model=model,
+        system=SYSTEM_PROMPT,
+        messages=messages,
+        max_tokens=800,
+    )
+    return response.content[0].text.strip()
+
+
+# ---------------------------------------------------------------------------
+# Fallback (rule-based)
+# ---------------------------------------------------------------------------
+
 def _rule_based_reply(user_message: str) -> str | None:
     msg = user_message.lower().strip()
     for key, value in FALLBACK_RESPONSES.items():
         if key in msg:
             return value
-    # generic travel keywords
     if any(w in msg for w in ["du lịch", "travel", "trip", "tour", "hotel", "khách sạn"]):
         return (
             "Tôi có thể giúp bạn khám phá các điểm đến tuyệt vời! 🌏\n\n"
@@ -44,23 +146,55 @@ def _rule_based_reply(user_message: str) -> str | None:
     return None
 
 
-async def get_travel_response(history: List[Dict[str, str]]) -> str:
-    api_key = os.getenv("OPENAI_API_KEY", "")
+# ---------------------------------------------------------------------------
+# Main entry point
+# ---------------------------------------------------------------------------
 
-    if api_key and api_key != "your_openai_api_key_here":
-        try:
-            from openai import AsyncOpenAI
-            client = AsyncOpenAI(api_key=api_key)
-            messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
-            response = await client.chat.completions.create(
-                model="gpt-3.5-turbo",
-                messages=messages,
-                max_tokens=800,
-                temperature=0.7,
+async def get_travel_response(history: List[Dict[str, str]]) -> str:
+    provider = detect_provider()
+    print(f"[AI] Using provider: {provider}")
+
+    try:
+        if provider == "openai":
+            return await _call_openai_compat(
+                history,
+                api_key=os.getenv("OPENAI_API_KEY", ""),
+                model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
             )
-            return response.choices[0].message.content.strip()
-        except Exception as e:
-            print(f"OpenAI error: {e}")
+
+        elif provider == "gemini":
+            return await _call_gemini(
+                history,
+                api_key=os.getenv("GEMINI_API_KEY", ""),
+                model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+            )
+
+        elif provider == "claude":
+            return await _call_claude(
+                history,
+                api_key=os.getenv("CLAUDE_API_KEY", ""),
+                model=os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307"),
+            )
+
+        elif provider == "openrouter":
+            return await _call_openai_compat(
+                history,
+                api_key=os.getenv("OPENROUTER_API_KEY", ""),
+                model=os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo"),
+                base_url="https://openrouter.ai/api/v1",
+            )
+
+        elif provider == "ollama":
+            base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1"
+            return await _call_openai_compat(
+                history,
+                api_key="ollama",  # Ollama không cần key thật
+                model=os.getenv("OLLAMA_MODEL", "llama3"),
+                base_url=base_url,
+            )
+
+    except Exception as e:
+        print(f"[{provider}] error: {e}")
 
     # Fallback: rule-based
     last_user_msg = next(
@@ -78,3 +212,4 @@ async def get_travel_response(history: List[Dict[str, str]]) -> str:
         "🌍 **Châu Âu:** Paris, Rome, Barcelona\n\n"
         "Bạn muốn khám phá điểm đến nào?"
     )
+
