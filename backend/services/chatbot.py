@@ -1425,31 +1425,63 @@ def _extract_vp_booking_context(history: List[Dict]) -> Dict:
 
 def _parse_vp_contact_info(msg: str) -> Dict:
     info: Dict = {}
-    m = re.search(r"họ tên\s*[:\-]\s*(.+)", msg, re.IGNORECASE)
+
+    # ── Labeled format (form filled in) ──────────────────────────────────────
+    m = re.search(r"họ tên\s*[:\-]\s*([^\n,]+)", msg, re.IGNORECASE)
     if m:
-        info["guest_name"] = m.group(1).strip().split("\n")[0]
-    m = re.search(r"(?:số điện thoại|điện thoại|phone|sdt)\s*[:\-]\s*([\d\s\+\-]{8,15})", msg, re.IGNORECASE)
+        info["guest_name"] = m.group(1).strip()
+
+    m = re.search(r"(?:số điện thoại|điện thoại|phone|sdt|tel)\s*[:\-]\s*([\d\s\+\-]{8,15})", msg, re.IGNORECASE)
     if not m:
         m = re.search(r"\b(0\d{9,10}|\+84\d{9,10})\b", msg)
     if m:
         info["phone"] = re.sub(r"\s+", "", m.group(1))
+
     m = re.search(r"email\s*[:\-]\s*([\w.\-]+@[\w.\-]+\.\w+)", msg, re.IGNORECASE)
     if not m:
         m = re.search(r"[\w.\-]+@[\w.\-]+\.\w+", msg)
     if m:
         info["email"] = m.group(1) if m.lastindex else m.group(0)
+
     ci = re.search(r"check.?in\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}(?:[\/\-\.]\d{2,4})?)", msg, re.IGNORECASE)
     co = re.search(r"check.?out\s*[:\-]\s*(\d{1,2}[\/\-\.]\d{1,2}(?:[\/\-\.]\d{2,4})?)", msg, re.IGNORECASE)
     if ci:
         info["checkin"] = ci.group(1)
     if co:
         info["checkout"] = co.group(1)
+
     m = re.search(r"(?:số khách|khách|người)\s*[:\-]?\s*(\d+)", msg, re.IGNORECASE)
     if m:
         info["num_guests"] = int(m.group(1))
+
     m = re.search(r"(?:ghi chú|note)\s*[:\-]\s*(.+)", msg, re.IGNORECASE)
     if m:
         info["notes"] = m.group(1).strip()
+
+    # ── Fallback: free-form / comma-separated (no labels) ────────────────────
+    if not info.get("guest_name"):
+        # Remove already-detected phone and email from text, then find the name
+        clean = msg
+        if info.get("phone"):
+            clean = clean.replace(info["phone"], " ")
+        if info.get("email"):
+            clean = clean.replace(info["email"], " ")
+        # Also strip loose phone/email patterns to avoid misidentification
+        clean = re.sub(r"\b0\d{9,10}\b", " ", clean)
+        clean = re.sub(r"\+84\d{9,10}\b", " ", clean)
+        clean = re.sub(r"[\w.\-]+@[\w.\-]+\.\w+", " ", clean)
+        clean = re.sub(r"\d{1,2}[\/\-\.]\d{1,2}(?:[\/\-\.]\d{2,4})?", " ", clean)  # dates
+        # Split remaining by comma/newline/semicolon, take first non-trivial chunk
+        parts = re.split(r"[,;\n]", clean)
+        for part in parts:
+            candidate = part.strip()
+            # Must be ≥2 chars, mostly letters (Vietnamese name)
+            if len(candidate) >= 2 and re.search(r"[A-Za-zÀ-ỹ]", candidate):
+                # Reject obvious non-names (just digits, keywords, etc.)
+                if not re.match(r"^\d+$", candidate):
+                    info["guest_name"] = candidate
+                    break
+
     return info
 
 
@@ -1504,16 +1536,24 @@ def _save_booking_and_notify(booking_data: Dict) -> tuple[Optional[int], bool]:
 
 def _extract_who(text: str) -> str:
     t = text.lower()
-    if any(k in t for k in ["gia đình", "gia dinh", "con", "trẻ em", "bé", "ba mẹ", "bố mẹ", "cả nhà"]):
-        return "family"
-    if any(k in t for k in ["nhóm", "nhom", "bạn bè", "ban be", "hội", "team", "3 người", "4 người", "5 người"]):
-        return "group"
-    if any(k in t for k in ["cặp đôi", "cap doi", "vợ chồng", "vo chong", "bạn trai", "bạn gái", "người yêu",
-                              "nguoi yeu", "2 người", "hai người", "hai nguoi"]):
-        return "couple"
-    if any(k in t for k in ["một mình", "mot minh", "solo", "1 người", "mình đi", "minh di"]):
+    # Solo — check FIRST so "1 mình" doesn't accidentally match "1 người" couple check
+    if any(k in t for k in [
+        "một mình", "mot minh", "1 mình", "1minh", "di minh", "đi mình",
+        "mình đi", "minh di", "solo", "1 người", "tui di", "tôi đi một",
+        "chỉ mình", "chi minh", "mình thôi", "minh thoi",
+    ]):
         return "solo"
-    # Number shortcuts for Q1
+    if any(k in t for k in ["gia đình", "gia dinh", "có con", "co con", "trẻ em", "tre em",
+                              "bé", "ba mẹ", "bố mẹ", "bo me", "ba me", "cả nhà", "ca nha"]):
+        return "family"
+    if any(k in t for k in ["nhóm", "nhom", "bạn bè", "ban be", "hội", "team",
+                              "3 người", "4 người", "5 người", "6 người"]):
+        return "group"
+    if any(k in t for k in ["cặp đôi", "cap doi", "vợ chồng", "vo chong",
+                              "bạn trai", "ban trai", "bạn gái", "ban gai",
+                              "người yêu", "nguoi yeu", "2 người", "hai người", "hai nguoi"]):
+        return "couple"
+    # Number shortcuts for Q1 menu (1=couple, 2=family, 3=group, 4=solo)
     stripped = t.strip()
     if stripped in ("1", "cặp", "cap"):
         return "couple"
@@ -1742,17 +1782,16 @@ def _extract_vp_style(text: str) -> str:
 
 
 def _extract_who_from_history(history: List[Dict]) -> str:
-    # Fast-track Q3 (who embedded in bot message): "👤*(đi với: ...)*"
+    _who_reverse = {"gia đình": "family", "nhóm bạn": "group",
+                    "cặp đôi": "couple", "một mình": "solo"}
+    # Fast-track: who embedded as "👤*(đi với: ...)*" in any assistant message
     for msg in history:
         if msg["role"] == "assistant":
             c = msg.get("content", "")
-            if _VP_MARKER_Q3_FAST1 in c or _VP_MARKER_Q3_FAST2 in c:
-                m = re.search(r"👤\*\(đi với:\s*([^)]+)\)", c)
-                if m:
-                    label = m.group(1).strip()
-                    reverse = {"gia đình": "family", "nhóm bạn": "group",
-                               "cặp đôi": "couple", "một mình": "solo"}
-                    return reverse.get(label, "couple")
+            m = re.search(r"👤\*\(đi với:\s*([^)]+)\)", c)
+            if m:
+                label = m.group(1).strip()
+                return _who_reverse.get(label, "couple")
     # Standard: answer after Q1 message
     found_q1 = False
     for msg in history:
@@ -1769,7 +1808,7 @@ def _extract_who_from_history(history: List[Dict]) -> str:
             _who_explicit_kws = [
                 "gia đình", "gia dinh", "nhóm", "nhom", "bạn bè",
                 "cặp đôi", "cap doi", "vợ chồng", "bạn trai", "bạn gái", "người yêu",
-                "một mình", "mot minh", "solo",
+                "một mình", "mot minh", "1 mình", "di minh", "mình đi", "solo",
             ]
             if any(k in _normalize(msg["content"]) for k in _who_explicit_kws):
                 return who
@@ -2691,6 +2730,51 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
             return _build_customize_prompt()
         return None
 
+    # ── Promotion / deal query — no planning needed ────────────────────────
+    _promo_kws = [
+        "ưu đãi", "uu dai", "khuyến mãi", "khuyen mai", "giảm giá", "giam gia",
+        "deal", "promotion", "offer", "promo", "sale", "ưu đai",
+    ]
+    if any(k in msg_norm for k in _promo_kws) and state is None:
+        dest_id, dest_name = _detect_vp_dest(msg_norm)
+        # Pull all deals for destination (resort_id=0 → match dest-level deals)
+        from database import get_vp_promotions
+        db_deals = get_vp_promotions(dest_id, 0)
+        # Also check static VINPEARL_DEALS as fallback
+        static_deals = [d for d in VINPEARL_DEALS]
+
+        rows = []
+        if db_deals:
+            for d in db_deals:
+                disc = d.get("discount_value") or ""
+                disc_str = f"{int(disc)}%" if disc else "Xem chi tiết"
+                rows.append(
+                    f"| **{d.get('name','')}** | {disc_str} | "
+                    f"{d.get('condition_text','') or d.get('note','')} | "
+                    f"[Xem]({d.get('source_url','https://vinpearl.com/vi/khuyen-mai')}) |"
+                )
+        else:
+            for d in static_deals:
+                rows.append(
+                    f"| **{d['title']}** | {d['discount']} | "
+                    f"{d['condition']} | "
+                    f"[Xem]({d['source_url']}) |"
+                )
+
+        table = (
+            f"### 🎁 Ưu đãi Vinpearl {dest_name} đang áp dụng\n\n"
+            "| Ưu đãi | Giảm | Điều kiện | Chi tiết |\n"
+            "|---|:---:|---|:---:|\n"
+            + "\n".join(rows)
+        )
+        table += (
+            "\n\n> 💡 Ưu đãi có thể thay đổi theo thời điểm. "
+            "Kiểm tra chính xác tại [vinpearl.com/vi/khuyen-mai](https://vinpearl.com/vi/khuyen-mai).\n\n"
+            f"Bạn muốn **lên lịch trình** ghé thăm Vinpearl {dest_name} không? "
+            f"Chỉ cần nói ví dụ: *\"Lên lịch 3 ngày {dest_name}\"*"
+        )
+        return table
+
     # Initial trigger
     if state is None:
         if _is_vp_planning_intent(msg_norm):
@@ -2706,7 +2790,7 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
                 "gia đình", "gia dinh", "con ", "trẻ em", "ba mẹ", "bố mẹ",
                 "nhóm", "nhom", "bạn bè", "ban be", "hội",
                 "cặp đôi", "cap doi", "vợ chồng", "bạn trai", "bạn gái", "người yêu",
-                "một mình", "mot minh", "solo",
+                "một mình", "mot minh", "1 mình", "di minh", "mình đi", "solo",
                 " 1 người", " 2 người", " 3 người", " 4 người",
             ]
             who_known = any(k in msg_norm for k in _who_explicit_kws)
@@ -2729,21 +2813,22 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
                 trip_note = ""
 
             # --- Fast-track: all 3 known → generate result directly ---
-            if who_known and budget_known and style_known:
-                room = _find_vp_room(pre_who, pre_budget, pre_style, dest_id)
+            # --- Fast-track: who + budget known → generate directly (default style = "cả hai") ---
+            if who_known and budget_known:
+                resolved_style = pre_style if style_known else "cả hai"
+                room = _find_vp_room(pre_who, pre_budget, resolved_style, dest_id)
                 deal = _find_vp_deal(room, dest_id)
                 all_rooms = _get_all_dest_rooms(dest_id)
-                return _build_vp_timeline(pre_who, pre_style, room, deal, days, dest_name, dest_id, all_rooms, pre_budget)
+                return _build_vp_timeline(pre_who, resolved_style, room, deal, days, dest_name, dest_id, all_rooms, pre_budget)
 
-            # --- Fast-track: who + budget known → skip to Q3 directly ---
-            if who_known and budget_known:
-                budget_embed = f" 💰*(ngân sách: {pre_budget})*"
+            # --- who known, skip Q1 → ask Q2 ---
+            if who_known:
                 who_embed = f" 👤*(đi với: {_who_label(pre_who)})*"
                 return (
-                    f"🏖️ **Câu 1/1 — Phong cách** chuyến đi{trip_note}{budget_embed}{who_embed}\n\n"
-                    "1. 🌊 **Biển & nghỉ dưỡng** — tắm biển, bể bơi, spa\n"
-                    "2. 🎢 **Vui chơi giải trí** — VinWonders, Safari\n"
-                    "3. 🌟 **Cả hai** — nửa biển, nửa vui chơi\n\n"
+                    f"💰 **Câu 2/3 — Ngân sách** mỗi đêm tại **{dest_name}** khoảng bao nhiêu?{trip_note}{who_embed}\n\n"
+                    "1. 💚 Thấp — dưới 3 triệu/đêm\n"
+                    "2. 💛 Trung bình — 3–6 triệu/đêm\n"
+                    "3. 🔴 Cao — trên 6 triệu/đêm\n\n"
                     "*(Gõ số hoặc mô tả)*"
                 )
 
@@ -2796,7 +2881,21 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
             "*(Gõ số hoặc mô tả)*"
         )
 
-    # Q2 answered → clarify if vague, else ask Q3
+    def _generate_from_history(user_msg_norm: str) -> str:
+        who = _extract_who_from_history(history)
+        budget = _extract_budget_from_history_vp(history)
+        style_raw = _extract_vp_style(user_msg_norm)
+        _style_kws = ["biển", "bien", "beach", "tắm", "bơi", "nghỉ dưỡng",
+                      "vui chơi", "vui choi", "vinwonders", "safari", "cả hai", "ca hai"]
+        style = style_raw if any(k in user_msg_norm for k in _style_kws) else "cả hai"
+        days = _extract_trip_days(history, user_message)
+        dest_id, dest_name = _extract_dest_from_history(history)
+        room = _find_vp_room(who, budget, style, dest_id)
+        deal = _find_vp_deal(room, dest_id)
+        all_rooms = _get_all_dest_rooms(dest_id)
+        return _build_vp_timeline(who, style, room, deal, days, dest_name, dest_id, all_rooms, budget)
+
+    # Q2 answered → clarify if vague, else generate directly (no need for Q3)
     if state == "waiting_q2":
         days_q2 = _extract_trip_days(history, user_message)
         budget = _extract_budget_vp(msg_norm, days_q2)
@@ -2808,37 +2907,32 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
                 "- **Trên 6 tr/đêm**: Suite hoặc Pool Villa — sang trọng nhất Vinpearl\n\n"
                 "Bạn nghĩ tầm nào phù hợp hơn?"
             )
-        return (
-            "🏖️ **Câu 3/3 — Phong cách** chuyến đi?\n\n"
-            "1. 🌊 **Biển & nghỉ dưỡng** — tắm biển, bể bơi, spa\n"
-            "2. 🎢 **Vui chơi giải trí** — VinWonders, Vinpearl Safari, Grand World\n"
-            "3. 🌟 **Cả hai** — nửa biển, nửa vui chơi\n\n"
-            "*(Gõ số hoặc mô tả)*"
-        )
+        return _generate_from_history(msg_norm)
 
-    # After clarify → ask Q3 (budget stored in history, extracted later)
+    # After clarify → generate directly
     if state == "waiting_clarify":
-        return (
-            "🏖️ **Câu 3/3 — Phong cách** chuyến đi?\n\n"
-            "1. 🌊 **Biển & nghỉ dưỡng** — tắm biển, bể bơi, spa\n"
-            "2. 🎢 **Vui chơi giải trí** — VinWonders, Vinpearl Safari, Grand World\n"
-            "3. 🌟 **Cả hai** — nửa biển, nửa vui chơi\n\n"
-            "*(Gõ số hoặc mô tả)*"
-        )
+        return _generate_from_history(msg_norm)
 
-    # Q3 answered → generate full timeline
+    # Q3 answered → generate full timeline (kept for back-compat with old sessions)
     if state == "waiting_q3":
-        who = _extract_who_from_history(history)
-        budget = _extract_budget_from_history_vp(history)
-        style = _extract_vp_style(msg_norm)
-        days = _extract_trip_days(history, user_message)
-        dest_id, dest_name = _extract_dest_from_history(history)
-        room = _find_vp_room(who, budget, style, dest_id)
-        deal = _find_vp_deal(room, dest_id)
-        all_rooms = _get_all_dest_rooms(dest_id)
-        return _build_vp_timeline(who, style, room, deal, days, dest_name, dest_id, all_rooms, budget)
+        return _generate_from_history(msg_norm)
 
     return None
+
+
+_VP_REDIRECT_MSG = (
+    "🌴 **VinBot** chỉ hỗ trợ lập lịch trình tại các điểm đến **Vinpearl**.\n\n"
+    "Hiện tại tôi có thể giúp bạn tại:\n\n"
+    "| Điểm đến | Nổi bật |\n"
+    "|---|---|\n"
+    "| 🏝️ **Phú Quốc** | Đảo ngọc, VinWonders, Safari, resort sang |\n"
+    "| 🌊 **Nha Trang** | Biển đẹp, VinWonders, hải sản tươi |\n"
+    "| 🏖️ **Nam Hội An** | Vui chơi ven biển, cách phố cổ 30 phút |\n"
+    "| 🌅 **Cửa Hội – Nghệ An** | Biển yên tĩnh, gần thành phố Vinh |\n"
+    "| ⚓ **Hải Phòng** | Đảo Cát Bà, cảng biển, ẩm thực phong phú |\n\n"
+    "Bạn muốn lên lịch trình tại điểm nào? Chỉ cần nói ví dụ:\n"
+    "*\"Lên lịch 3 ngày Nha Trang\"* hoặc *\"2N1Đ Phú Quốc\"*"
+)
 
 
 def _rule_based_reply(user_message: str, history: List[Dict[str, str]] | None = None) -> str | None:
@@ -2856,80 +2950,14 @@ def _rule_based_reply(user_message: str, history: List[Dict[str, str]] | None = 
         if booking_reply:
             return booking_reply
 
-    # 1. Detect city trong tin nhắn hiện tại
-    current_city: str | None = None
-    for kw, city in KEYWORD_MAP.items():
-        if kw in msg:
-            current_city = city
-            break
-
-    # 2. Detect topic trong tin nhắn hiện tại
-    current_topic: str | None = None
-    for kw, topic in TOPIC_MAP.items():
-        if kw in msg:
-            current_topic = topic
-            break
-
-    # 3. Nếu hỏi khách sạn/hotel
-    if current_topic == "hotel":
-        city = current_city or _extract_city_from_history(history)
-        if city and city in CITY_HOTEL_INFO:
-            return CITY_HOTEL_INFO[city]
-        return (
-            "Bạn muốn tìm khách sạn ở **thành phố nào**? 🏨\n\n"
-            "Tôi có thông tin về: Hà Nội, Đà Nẵng, Hội An, Sapa, Phú Quốc, Bangkok, Tokyo, Paris."
-        )
-
-    # 4. Nếu hỏi về lịch trình
-    if current_topic == "itinerary":
-        city = current_city or _extract_city_from_history(history)
-        days = _extract_days(user_message) or _extract_days_from_history(history)
-        style = _extract_style(user_message) or _extract_style_from_history(history)
-
-        if city and days:
-            return _build_itinerary(city, days, style)
-
-        if city and not days:
-            return (
-                f"Bạn muốn đi **{city.title()}** bao nhiêu ngày? 🗺️\n\n"
-                "Và phong cách du lịch của bạn là gì?\n"
-                "- 🏖️ **Nghỉ dưỡng** — resort, spa, biển\n"
-                "- 🧭 **Khám phá** — tham quan, trekking\n"
-                "- 🍜 **Ẩm thực** — foodie tour\n"
-                "- 🎭 **Văn hoá** — di tích, lịch sử"
-            )
-
-        return (
-            "Bạn muốn lên lịch trình ở **thành phố nào** và **bao nhiêu ngày**? 🗺️\n\n"
-            "Ví dụ: *'lịch trình 7 ngày Đà Nẵng nghỉ dưỡng'*"
-        )
-
-    # 5. Nếu có city trong tin nhắn hiện tại → trả info city
-    if current_city and current_city in FALLBACK_RESPONSES:
-        return FALLBACK_RESPONSES[current_city]
-
-    # 6. Gợi ý điểm đến (inspire)
-    inspire_kws = ["gợi ý", "goi y", "đề xuất", "de xuat", "inspire", "recommend",
-                   "điểm đến", "muốn đi", "nên đi", "thú vị", "hay ho"]
-    if any(k in msg for k in inspire_kws):
-        return CITY_INSPIRE["mặc định"]
-
-    # 7. Generic travel keyword
-    if any(w in msg for w in ["du lịch", "travel", "trip", "tour", "khách sạn", "hotel"]):
-        city = _extract_city_from_history(history)
-        if city:
-            return (
-                f"Bạn muốn tôi tư vấn thêm về **{city.title()}** không?\n\n"
-                "Tôi có thể giúp: lịch trình, khách sạn, ẩm thực, phương tiện di chuyển."
-            )
-        return (
-            "Tôi có thể giúp bạn khám phá các điểm đến tuyệt vời! 🌏\n\n"
-            "Hãy cho tôi biết:\n"
-            "1. Bạn muốn đi **đâu**?\n"
-            "2. Thời gian **bao lâu**?\n"
-            "3. Ngân sách **khoảng bao nhiêu**?\n\n"
-            "Tôi sẽ gợi ý lịch trình phù hợp nhất cho bạn!"
-        )
+    # 1–7. Any travel-related query → redirect to Vinpearl destinations
+    _travel_kws = [
+        "đi ", "muốn đi", "du lịch", "lịch trình", "lich trinh", "travel", "trip",
+        "tour", "khách sạn", "hotel", "gợi ý", "đề xuất", "recommend", "nên đi",
+        "điểm đến", "resort", "nghỉ dưỡng", "nghi duong",
+    ]
+    if any(k in msg for k in _travel_kws):
+        return _VP_REDIRECT_MSG
 
     return None
 

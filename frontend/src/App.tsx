@@ -21,7 +21,7 @@ export default function App() {
   const [conversations, setConversations] = useState<Conversation[]>([]);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [loading, setLoading] = useState(false);
-  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [sidebarOpen, setSidebarOpen] = useState(false);
 
   // Ref luôn giữ giá trị mới nhất của activeId — tránh stale closure trong handleSend
   const activeIdRef = useRef<string | null>(null);
@@ -149,7 +149,7 @@ export default function App() {
             </svg>
           </button>
           <span className="font-semibold text-gray-900 text-base tracking-tight">
-            🌴 VinBot — Vinpearl Phú Quốc
+            🌴 VinBot
           </span>
         </div>
 
