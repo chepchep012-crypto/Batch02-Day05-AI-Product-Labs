@@ -11,10 +11,10 @@ interface Props {
 }
 
 const SUGGESTIONS = [
-  { label: "🗺️ Lên lịch 2N1Đ Vinpearl",    prompt: "Giúp tôi lên lịch trình 2 ngày 1 đêm Vinpearl Phú Quốc" },
-  { label: "🎢 VinWonders hay Safari trước?", prompt: "Nên đi VinWonders hay Vinpearl Safari trước trong 2N1Đ?" },
-  { label: "🏨 Chọn khu phòng Vinpearl",     prompt: "Tư vấn chọn khu phòng Vinpearl Phú Quốc cho gia đình" },
-  { label: "🎁 Ưu đãi Vinpearl hiện tại",    prompt: "Vinpearl Phú Quốc có ưu đãi gì đang áp dụng không?" },
+  { label: "🗺️ Lên lịch Vinpearl",           prompt: "Tôi muốn lên lịch trình Vinpearl" },
+  { label: "🏨 Tư vấn chọn khu phòng",        prompt: "Tư vấn chọn khu phòng Vinpearl phù hợp cho tôi" },
+  { label: "🎁 Ưu đãi Vinpearl hiện tại",     prompt: "Vinpearl có ưu đãi gì đang áp dụng không?" },
+  { label: "📍 Các điểm đến Vinpearl",        prompt: "Vinpearl có những điểm đến nào?" },
 ];
 
 export default function ChatWindow({ messages, loading, onSend }: Props) {
@@ -38,8 +38,8 @@ export default function ChatWindow({ messages, loading, onSend }: Props) {
                 🌴
               </div>
               <div className="text-sm text-gray-800 leading-relaxed">
-                <p>Xin chào! Tôi là <strong>VinBot</strong> — trợ lý AI lên lịch Vinpearl Phú Quốc. 🌴</p>
-                <p className="mt-1 text-gray-500">Tôi sẽ hỏi bạn 3 câu ngắn, rồi đề xuất lịch trình 2N1Đ, khu phòng và ưu đãi thật phù hợp nhất!</p>
+                <p>Xin chào! Tôi là <strong>VinBot</strong> — trợ lý AI lên lịch Vinpearl. 🌴</p>
+                <p className="mt-1 text-gray-500">Tôi hỗ trợ lập lịch trình tại 5 điểm đến Vinpearl: Phú Quốc, Nha Trang, Nam Hội An, Cửa Hội và Hải Phòng.</p>
               </div>
             </div>
 

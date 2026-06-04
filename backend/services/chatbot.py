@@ -1250,9 +1250,10 @@ VINPEARL_DEALS: List[Dict] = [
     },
 ]
 
-_VP_MARKER_Q1 = "🤝 **Câu 1/3"
-_VP_MARKER_Q1_ONLY = "🤝 **Câu 1/3"   # alias kept for clarity
-_VP_MARKER_Q2 = "💰 **Câu 2/3"
+_VP_MARKER_QDEST = "🌴 **Bạn muốn đến Vinpearl ở đâu?"
+_VP_MARKER_Q1 = "🤝 **Bạn đi với ai?"
+_VP_MARKER_Q1_ONLY = "🤝 **Bạn đi với ai?"   # alias kept for clarity
+_VP_MARKER_Q2 = "💰 **Ngân sách"
 _VP_MARKER_Q2C = "💡 **Làm rõ ngân sách"
 _VP_MARKER_Q3 = "🏖️ **Câu 3/3"
 _VP_MARKER_Q3_FAST1 = "🏖️ **Câu 2/2"   # fast-track after Q1 (budget pre-known)
@@ -1337,25 +1338,37 @@ def _extract_trip_days(history: List[Dict], current_msg: str = "") -> int:
 
 
 def _extract_dest_from_history(history: List[Dict]) -> tuple:
-    """Extract (dest_id, dest_name) embedded in Q1 message. Default Phú Quốc."""
+    """Extract (dest_id, dest_name) from conversation history. Default Phú Quốc."""
+    # First try assistant messages that embed dest name in known patterns
     for msg in history:
-        if msg["role"] == "assistant" and _VP_MARKER_Q1 in msg["content"]:
-            m = re.search(r"tại\s+\*\*([^*]+)\*\*", msg["content"])
+        if msg["role"] != "assistant":
+            continue
+        c = msg["content"]
+        if _VP_MARKER_Q1 in c or _VP_MARKER_Q2 in c:
+            # Pattern: "Vinpearl XYZ" inside parentheses e.g. "(Vinpearl Phú Quốc)"
+            m = re.search(r"Vinpearl\s+([^\)\*\n]+)", c)
+            if m:
+                dest_name_raw = m.group(1).strip().rstrip("*)")
+                for kw, info in _VP_DEST_MAP.items():
+                    if kw in dest_name_raw.lower():
+                        return info
+            # Pattern: "tại **DestName**"
+            m = re.search(r"tại\s+\*\*([^*]+)\*\*", c)
             if m:
                 dest_name = m.group(1).strip()
                 for kw, info in _VP_DEST_MAP.items():
                     if kw in dest_name.lower():
                         return info
-                # exact match by display name
                 for info in _VP_DEST_MAP.values():
                     if info[1] == dest_name:
                         return info
-    # fallback: scan user messages
+    # Fallback: scan user messages for any dest keyword
     for msg in history:
         if msg["role"] == "user":
-            dest_id, dest_name = _detect_vp_dest(_normalize(msg["content"]))
-            if dest_id != 1 or "phú quốc" in msg["content"].lower() or "phu quoc" in msg["content"].lower():
-                return (dest_id, dest_name)
+            norm = _normalize(msg["content"])
+            for kw, info in _VP_DEST_MAP.items():
+                if kw in norm:
+                    return info
     return (1, "Phú Quốc")
 
 
@@ -1367,10 +1380,8 @@ def _get_vp_state(history: List[Dict]) -> Optional[str]:
                 return "waiting_vp_contact"
             if _VP_MARKER_BOOKING_DONE in c:
                 return "booking_done"
-            # Full result (may also contain customize prompt at end)
             if _VP_MARKER_RESULT in c:
                 return "result_shown"
-            # Standalone customize-only message (no full result above)
             if _MARKER_VP_CUSTOMIZE in c:
                 return "waiting_customize"
             if _VP_MARKER_Q3 in c or _VP_MARKER_Q3_FAST1 in c or _VP_MARKER_Q3_FAST2 in c:
@@ -1381,6 +1392,8 @@ def _get_vp_state(history: List[Dict]) -> Optional[str]:
                 return "waiting_q2"
             if _VP_MARKER_Q1 in c:
                 return "waiting_q1"
+            if _VP_MARKER_QDEST in c:
+                return "waiting_dest"
             break
     return None
 
@@ -3065,16 +3078,40 @@ def _tool_router(user_message: str, history: List[Dict[str, str]] | None = None)
 
     # ── Planning flow ──────────────────────────────────────────────────────
     _is_planning = _is_vp_planning_intent(msg) or state in (
-        "waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"
+        "waiting_dest", "waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"
     )
     if _is_planning:
-        # Resolve destination
-        if state:
+        # Resolve destination — check if explicitly mentioned
+        _dest_known = any(k in msg for k in _VP_DEST_MAP)
+        if state in ("waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"):
             dest_id, dest_name = _extract_dest_from_history(history)
+        elif state == "waiting_dest":
+            # User just answered the destination question
+            dest_id, dest_name = _detect_vp_dest(msg)
+            if not _dest_known:
+                # Still no recognizable destination
+                return dispatch_tool("get_destinations", {})
+            # destination now known → ask who next
+            days = max(1, min(_extract_trip_days(history, user_message) or 2, 14))
+            return (
+                f"🤝 **Bạn đi với ai?** *(Vinpearl {dest_name})*\n\n"
+                "1. 👫 Cặp đôi\n"
+                "2. 👨‍👩‍👧 Gia đình (có con nhỏ)\n"
+                "3. 👥 Nhóm bạn\n"
+                "4. 🧍 Một mình\n\n"
+                "*(Gõ số hoặc mô tả)*"
+            )
         else:
             dest_id, dest_name = _detect_vp_dest(msg)
 
         days = max(1, min(_extract_trip_days(history, user_message) or 2, 14))
+
+        # ── No specific destination in initial message → ask destination first ──
+        if not _dest_known and state is None:
+            return (
+                "🌴 **Bạn muốn đến Vinpearl ở đâu?**\n\n"
+                + dispatch_tool("get_destinations", {})
+            )
 
         # ── State: waiting_q1 (user just answered "who") ──
         if state == "waiting_q1":
@@ -3158,7 +3195,7 @@ def _tool_router(user_message: str, history: List[Dict[str, str]] | None = None)
         budget_hint = f"\n💰*(ngân sách: {pre_budget})* ← đã ghi nhận" if budget_known else ""
         trip_ctx = f" *(Vinpearl {dest_name} · {days} ngày)*" if dest_name else ""
         return (
-            f"🤝 **Bạn đi với ai?**{trip_ctx}{budget_hint}\n\n"
+            f"{_VP_MARKER_Q1}**{trip_ctx}{budget_hint}\n\n"
             "1. 👫 Cặp đôi\n"
             "2. 👨‍👩‍👧 Gia đình (có con nhỏ)\n"
             "3. 👥 Nhóm bạn\n"
