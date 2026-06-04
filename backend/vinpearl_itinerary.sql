@@ -63,6 +63,23 @@ CREATE TABLE Room_Type (
         REFERENCES Resort(resort_id)
 );
 
+-- Bảng chặn ngày hết phòng / bảo trì.
+-- Logic: mặc định CÒN PHÒNG — chỉ ghi vào đây những ngày/khoảng KHÔNG bán được.
+-- Bot kiểm tra: nếu check_in..check_out KHÔNG chồng bất kỳ block nào → available.
+CREATE TABLE Room_Availability_Block (
+    block_id        INT          AUTO_INCREMENT PRIMARY KEY,
+    room_type_id    INT          NOT NULL,
+    block_from      DATE         NOT NULL,
+    block_to        DATE         NOT NULL,   -- inclusive
+    block_reason    ENUM('sold_out','maintenance','reserved','seasonal_close')
+                                 NOT NULL DEFAULT 'sold_out',
+    notes           VARCHAR(300),
+    created_at      DATETIME     NOT NULL DEFAULT CURRENT_TIMESTAMP,
+    CONSTRAINT fk_rab_rt   FOREIGN KEY (room_type_id)
+        REFERENCES Room_Type(room_type_id),
+    CONSTRAINT chk_rab_dates CHECK (block_to >= block_from)
+);
+
 -- ============================================================
 -- NHÓM 2: ƯU ĐÃI / KHUYẾN MÃI
 -- ============================================================
@@ -273,6 +290,7 @@ CREATE INDEX idx_ui_dest          ON User_Input(destination_id);
 CREATE INDEX idx_itin_session     ON Itinerary(session_id);
 CREATE INDEX idx_timeline_day     ON Itinerary_Timeline(itinerary_id, day_number);
 CREATE INDEX idx_ai_log           ON AI_Decision_Log(session_id, decision_type);
+CREATE INDEX idx_rab_room_dates   ON Room_Availability_Block(room_type_id, block_from, block_to);
 
 -- ============================================================
 -- VIEWS
@@ -306,6 +324,61 @@ LEFT JOIN Promotion p ON (p.destination_id = d.destination_id OR p.destination_i
                       AND CURDATE() BETWEEN p.valid_from AND p.valid_to
 WHERE d.is_active = 1
 GROUP BY d.destination_id;
+
+-- Trạng thái phòng hôm nay: available nếu không có block nào chồng CURDATE().
+CREATE VIEW v_room_availability_today AS
+SELECT
+    rt.room_type_id,
+    rt.type_name,
+    rt.budget_level,
+    rt.price_per_night,
+    rt.capacity_adults,
+    rt.capacity_children,
+    r.resort_id,
+    r.resort_name,
+    r.resort_code,
+    d.destination_id,
+    d.destination_name,
+    CASE
+        WHEN EXISTS (
+            SELECT 1 FROM Room_Availability_Block rab
+            WHERE rab.room_type_id = rt.room_type_id
+              AND CURDATE() BETWEEN rab.block_from AND rab.block_to
+        ) THEN 'unavailable'
+        ELSE 'available'
+    END                         AS status_today,
+    (
+        SELECT rab2.block_reason
+        FROM Room_Availability_Block rab2
+        WHERE rab2.room_type_id = rt.room_type_id
+          AND CURDATE() BETWEEN rab2.block_from AND rab2.block_to
+        LIMIT 1
+    )                           AS block_reason_today
+FROM Room_Type rt
+JOIN Resort r      ON rt.resort_id      = r.resort_id
+JOIN Destination d ON r.destination_id  = d.destination_id
+WHERE rt.is_active = 1 AND r.is_active = 1;
+
+-- Hàm kiểm tra phòng còn trống cho một khoảng ngày cụ thể.
+-- Trả về 1 = available, 0 = unavailable.
+-- Cách dùng: SELECT fn_is_room_available(3, '2026-07-15', '2026-07-17');
+DELIMITER $$
+CREATE FUNCTION fn_is_room_available(
+    p_room_type_id INT,
+    p_checkin      DATE,
+    p_checkout     DATE
+) RETURNS TINYINT(1)
+DETERMINISTIC READS SQL DATA
+BEGIN
+    DECLARE v_blocked INT DEFAULT 0;
+    SELECT COUNT(*) INTO v_blocked
+    FROM Room_Availability_Block
+    WHERE room_type_id = p_room_type_id
+      AND block_from  <  p_checkout   -- block bắt đầu trước ngày checkout
+      AND block_to    >= p_checkin;   -- block kết thúc từ ngày checkin trở đi
+    RETURN IF(v_blocked = 0, 1, 0);
+END$$
+DELIMITER ;
 
 -- ============================================================
 -- MOCK DATA
@@ -871,3 +944,55 @@ INSERT INTO AI_Decision_Log (session_id, decision_type, input_context, output_de
  '{"destination_id":5,"travel_group":"couple","budget_level":"luxury","preference":"nature","num_adults":2,"num_children":0}',
  '{"selected_room_type_id":21,"room_name":"Ocean Suite Hải Phòng","resort_id":9,"price_per_night":4500000,"reason":"Cặp đôi luxury + thiên nhiên → Ocean Suite view biển, gần sân golf và cầu cảng Cát Bà"}',
  'room_type_id=21, resort_id=9', 0, 78, '2026-06-04 11:32:30');
+
+-- ------------------------------------------------------------
+-- 14. ROOM_AVAILABILITY_BLOCK
+-- Logic: chỉ ghi NGÀY KHÔNG BÁN ĐƯỢC — mọi ngày khác mặc định còn phòng.
+--
+-- room_type_id tham chiếu:
+--   1  = Deluxe Sea View Phú Quốc          (VPR_PQ)
+--   3  = Beachfront Pool Villa Phú Quốc    (VPR_PQ)
+--   4  = Discovery Deluxe Bungalow         (VPD1_PQ)
+--   7  = Grand World 1BR Suite             (VPGW_PQ)
+--   8  = Safari Tent Lodge                 (VPSR_PQ)
+--   10 = Sea View Deluxe Nha Trang         (VPR_NT)
+--   12 = Luxury Sea View Villa NT          (VPL_NT)
+--   14 = Luxury Pool Villa NT              (VPL_NT)
+--   15 = Hội An Deluxe Garden Room         (VP_NHA)
+--   21 = Ocean Suite Hải Phòng             (VP_HP)
+-- ------------------------------------------------------------
+INSERT INTO Room_Availability_Block (room_type_id, block_from, block_to, block_reason, notes) VALUES
+
+-- Phú Quốc: Deluxe Sea View — cao điểm hè T7 đặt kín
+(1,  '2026-07-01', '2026-07-15', 'sold_out',    'Cao điểm hè — đặt kín từ sớm'),
+(1,  '2026-07-25', '2026-07-31', 'sold_out',    'Cuối tháng 7 — hết phòng'),
+
+-- Phú Quốc: Pool Villa — sold out dịp 30/4–1/5 và hè
+(3,  '2026-04-28', '2026-05-03', 'sold_out',    'Lễ 30/4–1/5 — đặt kín từ 3 tháng trước'),
+(3,  '2026-06-05', '2026-06-08', 'sold_out',    'Cuối tuần đầu tháng 6'),
+(3,  '2026-08-01', '2026-08-31', 'sold_out',    'Tháng 8 cao điểm — hết toàn bộ'),
+
+-- Phú Quốc: Discovery Bungalow — bảo trì định kỳ
+(4,  '2026-06-09', '2026-06-10', 'maintenance', 'Bảo trì hệ thống điện và nước định kỳ tháng 6'),
+(4,  '2026-09-01', '2026-09-03', 'maintenance', 'Sơn lại nội thất bungalow trước mùa đông'),
+
+-- Phú Quốc: Grand World Suite — đóng cửa để nâng cấp
+(7,  '2026-06-05', '2026-06-06', 'maintenance', 'Nâng cấp hệ thống điều hòa toàn tầng'),
+
+-- Phú Quốc: Safari Tent Lodge — hết phòng dịp nghỉ lễ
+(8,  '2026-09-01', '2026-09-05', 'sold_out',    'Dịp Quốc Khánh 2/9 — đặt kín'),
+
+-- Nha Trang: Sea View Deluxe — sold out tháng hè
+(10, '2026-06-06', '2026-06-07', 'sold_out',    'Cuối tuần 6–7/6'),
+(10, '2026-07-01', '2026-08-31', 'sold_out',    'Mùa hè Nha Trang cao điểm nhất năm — hết phòng'),
+
+-- Nha Trang: Luxury Pool Villa — reserved cho sự kiện đoàn
+(14, '2026-06-10', '2026-06-14', 'reserved',    'Đoàn corporate event 50 người thuê nguyên block'),
+(14, '2026-08-01', '2026-08-31', 'sold_out',    'Hè cao điểm'),
+
+-- Nam Hội An: Hội An Deluxe — sold out dịp lễ hội đèn lồng
+(15, '2026-10-01', '2026-10-03', 'sold_out',    'Lễ hội đèn lồng Hội An tháng 10'),
+
+-- Hải Phòng: Ocean Suite — bảo trì và cao điểm golf
+(21, '2026-06-12', '2026-06-13', 'maintenance', 'Bảo trì ban công và hệ thống view biển'),
+(21, '2026-10-01', '2026-10-31', 'sold_out',    'Mùa golf tháng 10 — đặt kín 3 tháng trước');

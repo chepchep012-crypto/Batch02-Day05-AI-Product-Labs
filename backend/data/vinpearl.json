@@ -110,9 +110,9 @@
         "star": 5,
         "area": "Bãi Dài",
         "rooms": [
-          { "type": "Deluxe", "guests": 2, "price_vnd": 2800000, "status": "available" },
-          { "type": "Suite Ocean View", "guests": 2, "price_vnd": 5500000, "status": "sold_out" },
-          { "type": "Villa 2 phòng ngủ", "guests": 4, "price_vnd": 9800000, "status": "available" }
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2800000, "status": "available", "unavailable_dates": ["2026-06-06", "2026-06-07"] },
+          { "type": "Suite Ocean View", "guests": 2, "price_vnd": 5500000, "status": "sold_out", "unavailable_dates": [] },
+          { "type": "Villa 2 phòng ngủ", "guests": 4, "price_vnd": 9800000, "status": "available", "unavailable_dates": [] }
         ],
         "phone": "+84 297 3550 555",
         "website": "https://vinpearl.com/vi/vinpearl-resort-spa-phu-quoc",
@@ -125,8 +125,8 @@
         "star": 5,
         "area": "Gành Dầu",
         "rooms": [
-          { "type": "Deluxe", "guests": 2, "price_vnd": 2400000, "status": "available" },
-          { "type": "Family Suite", "guests": 4, "price_vnd": 4200000, "status": "available" }
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2400000, "status": "available", "unavailable_dates": [] },
+          { "type": "Family Suite", "guests": 4, "price_vnd": 4200000, "status": "available", "unavailable_dates": ["2026-06-05", "2026-06-06"] }
         ],
         "phone": "+84 297 3650 999",
         "website": "https://vinpearl.com/vi/",
@@ -141,8 +141,8 @@
         "star": 5,
         "area": "Đảo Hòn Tre",
         "rooms": [
-          { "type": "Deluxe", "guests": 2, "price_vnd": 3200000, "status": "available" },
-          { "type": "Suite", "guests": 2, "price_vnd": 6500000, "status": "available" }
+          { "type": "Deluxe", "guests": 2, "price_vnd": 3200000, "status": "available", "unavailable_dates": ["2026-06-06"] },
+          { "type": "Suite", "guests": 2, "price_vnd": 6500000, "status": "available", "unavailable_dates": [] }
         ],
         "phone": "+84 258 3598 900",
         "website": "https://vinpearl.com/vi/vinpearl-resort-spa-nha-trang-bay",
@@ -155,8 +155,8 @@
         "star": 5,
         "area": "Đảo Hòn Tre",
         "rooms": [
-          { "type": "Deluxe", "guests": 2, "price_vnd": 2900000, "status": "sold_out" },
-          { "type": "Villa", "guests": 6, "price_vnd": 12000000, "status": "available" }
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2900000, "status": "sold_out", "unavailable_dates": [] },
+          { "type": "Villa", "guests": 6, "price_vnd": 12000000, "status": "available", "unavailable_dates": [] }
         ],
         "phone": "+84 258 3590 611",
         "website": "https://vinpearl.com/vi/",
@@ -171,8 +171,8 @@
         "star": 5,
         "area": "Bình Minh, Thăng Bình",
         "rooms": [
-          { "type": "Deluxe", "guests": 2, "price_vnd": 2600000, "status": "available" },
-          { "type": "Villa hướng biển", "guests": 4, "price_vnd": 8800000, "status": "available" }
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2600000, "status": "available", "unavailable_dates": [] },
+          { "type": "Villa hướng biển", "guests": 4, "price_vnd": 8800000, "status": "available", "unavailable_dates": ["2026-06-05"] }
         ],
         "phone": "+84 235 3758 999",
         "website": "https://vinpearl.com/vi/",
@@ -187,8 +187,8 @@
         "star": 5,
         "area": "Đảo Rều, Bãi Cháy",
         "rooms": [
-          { "type": "Deluxe hướng vịnh", "guests": 2, "price_vnd": 3000000, "status": "sold_out" },
-          { "type": "Suite hướng vịnh", "guests": 2, "price_vnd": 6200000, "status": "sold_out" }
+          { "type": "Deluxe hướng vịnh", "guests": 2, "price_vnd": 3000000, "status": "sold_out", "unavailable_dates": [] },
+          { "type": "Suite hướng vịnh", "guests": 2, "price_vnd": 6200000, "status": "sold_out", "unavailable_dates": [] }
         ],
         "phone": "+84 203 3618 888",
         "website": "https://vinpearl.com/vi/",
@@ -203,8 +203,8 @@
         "star": 5,
         "area": "Ven sông Hàn",
         "rooms": [
-          { "type": "Deluxe sông Hàn", "guests": 2, "price_vnd": 2200000, "status": "available" },
-          { "type": "Suite gia đình", "guests": 4, "price_vnd": 4500000, "status": "available" }
+          { "type": "Deluxe sông Hàn", "guests": 2, "price_vnd": 2200000, "status": "available", "unavailable_dates": [] },
+          { "type": "Suite gia đình", "guests": 4, "price_vnd": 4500000, "status": "available", "unavailable_dates": ["2026-06-07", "2026-06-08"] }
         ],
         "phone": "+84 236 3646 888",
         "website": "https://vinpearl.com/vi/",
