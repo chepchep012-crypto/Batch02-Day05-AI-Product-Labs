@@ -2920,46 +2920,184 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
     return None
 
 
-_VP_REDIRECT_MSG = (
-    "🌴 **VinBot** chỉ hỗ trợ lập lịch trình tại các điểm đến **Vinpearl**.\n\n"
-    "Hiện tại tôi có thể giúp bạn tại:\n\n"
-    "| Điểm đến | Nổi bật |\n"
-    "|---|---|\n"
-    "| 🏝️ **Phú Quốc** | Đảo ngọc, VinWonders, Safari, resort sang |\n"
-    "| 🌊 **Nha Trang** | Biển đẹp, VinWonders, hải sản tươi |\n"
-    "| 🏖️ **Nam Hội An** | Vui chơi ven biển, cách phố cổ 30 phút |\n"
-    "| 🌅 **Cửa Hội – Nghệ An** | Biển yên tĩnh, gần thành phố Vinh |\n"
-    "| ⚓ **Hải Phòng** | Đảo Cát Bà, cảng biển, ẩm thực phong phú |\n\n"
-    "Bạn muốn lên lịch trình tại điểm nào? Chỉ cần nói ví dụ:\n"
-    "*\"Lên lịch 3 ngày Nha Trang\"* hoặc *\"2N1Đ Phú Quốc\"*"
-)
-
-
-def _rule_based_reply(user_message: str, history: List[Dict[str, str]] | None = None) -> str | None:
+def _tool_router(user_message: str, history: List[Dict[str, str]] | None = None) -> str | None:
+    """
+    Deterministic router — handles state & intent detection, then delegates
+    ALL response building to dispatch_tool(). No duplicated response logic here.
+    """
     history = history or []
     msg = _normalize(user_message)
+    state = _get_vp_state(history)
 
-    # 0a. Vinpearl planning flow (highest priority)
-    vp_reply = _handle_vp_planning(user_message, history)
-    if vp_reply:
-        return vp_reply
+    # ── Stateful: collecting contact info for booking ──────────────────────
+    if state == "waiting_vp_contact":
+        ctx = _extract_vp_booking_context(history)
+        info = _parse_vp_contact_info(user_message)
+        missing = _vp_contact_missing(info)
+        if missing:
+            return (
+                f"⚠️ Còn thiếu: **{', '.join(missing)}**.\n\n"
+                f"{_format_vp_contact_form(ctx)}"
+            )
+        # All contact info present → submit_booking tool
+        adults, children = _vp_party_size(ctx.get("who", "couple"))
+        return dispatch_tool("submit_booking", {
+            "guest_name":       info["guest_name"],
+            "phone":            info["phone"],
+            "email":            info["email"],
+            "destination_name": ctx.get("dest_name", ""),
+            "room_type":        ctx.get("room_type", ""),
+            "resort_name":      ctx.get("resort", "Vinpearl"),
+            "checkin":          info.get("checkin", ""),
+            "checkout":         info.get("checkout", ""),
+            "num_guests":       info.get("num_guests") or adults + children,
+            "notes":            info.get("notes", ""),
+        })
 
-    # 0. Booking flow (bỏ qua nếu đang trong luồng Vinpearl — VP xử lý đặt lịch riêng)
-    if not _had_vp_itinerary(history) or not _is_vp_booking_intent(msg, history):
-        booking_reply = _handle_booking(user_message, history)
-        if booking_reply:
-            return booking_reply
+    if state == "booking_done":
+        return None  # let AI handle follow-up
 
-    # 1–7. Any travel-related query → redirect to Vinpearl destinations
+    # ── Stateful: booking intent after itinerary ───────────────────────────
+    if state in ("result_shown", "waiting_customize") and (
+        _is_vp_booking_intent(msg, history) or _is_booking_intent(msg)
+    ):
+        ctx = _extract_vp_booking_context(history)
+        return _format_vp_contact_form(ctx)
+
+    # ── Stateful: customize itinerary ──────────────────────────────────────
+    if state in ("result_shown", "waiting_customize"):
+        customize = _handle_vp_customize(user_message, history)
+        if customize:
+            return customize
+        if state == "result_shown":
+            return _build_customize_prompt()
+        return None
+
+    # ── Promotion / deal query ─────────────────────────────────────────────
+    _promo_kws = ["ưu đãi", "uu dai", "khuyến mãi", "khuyen mai",
+                  "giảm giá", "giam gia", "deal", "promo", "khuyến mại"]
+    if any(k in msg for k in _promo_kws) and state is None:
+        dest_id, _ = _detect_vp_dest(msg)
+        return dispatch_tool("get_promotions", {"destination_id": dest_id})
+
+    # ── Planning flow ──────────────────────────────────────────────────────
+    _is_planning = _is_vp_planning_intent(msg) or state in (
+        "waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"
+    )
+    if _is_planning:
+        # Resolve destination
+        if state:
+            dest_id, dest_name = _extract_dest_from_history(history)
+        else:
+            dest_id, dest_name = _detect_vp_dest(msg)
+
+        days = max(1, min(_extract_trip_days(history, user_message) or 2, 14))
+
+        # ── State: waiting_q1 (user just answered "who") ──
+        if state == "waiting_q1":
+            who = _extract_who(msg)
+            # embed who in Q2 message so it can be recovered from history
+            who_embed = f" 👤*(đi với: {_who_label(who)})*"
+            return (
+                f"💰 **Ngân sách** mỗi đêm tại **{dest_name}** khoảng bao nhiêu?{who_embed}\n\n"
+                "1. 💚 Thấp — dưới 3 triệu/đêm\n"
+                "2. 💛 Trung bình — 3–6 triệu/đêm\n"
+                "3. 🔴 Cao — trên 6 triệu/đêm\n\n"
+                "*(Gõ số hoặc mô tả)*"
+            )
+
+        # ── State: waiting_q2 / waiting_clarify (user just answered budget) ──
+        if state in ("waiting_q2", "waiting_clarify", "waiting_q3"):
+            budget = _extract_budget_vp(msg, days)
+            if budget == "mơ hồ":
+                return (
+                    "💡 **Làm rõ ngân sách** — Bạn đang nghĩ tới tầm nào?\n\n"
+                    "- **Dưới 3 tr/đêm**: Vinpearl Discovery / Standard\n"
+                    "- **3–6 tr/đêm**: Vinpearl Resort Deluxe\n"
+                    "- **Trên 6 tr/đêm**: Suite hoặc Pool Villa\n\n"
+                    "Bạn nghĩ tầm nào phù hợp hơn?"
+                )
+            who = _extract_who_from_history(history)
+            style = _extract_vp_style(msg) if any(
+                k in msg for k in ["biển", "vui chơi", "safari", "vinwonders", "cả hai"]
+            ) else "cả hai"
+            return dispatch_tool("build_itinerary", {
+                "destination_id":   dest_id,
+                "destination_name": dest_name,
+                "days":             days,
+                "who":              who,
+                "budget_tier":      budget,
+                "style":            style,
+            })
+
+        # ── state is None: initial trigger — detect all params ──
+        _who_kws = [
+            "gia đình", "gia dinh", "có con", "trẻ em", "ba mẹ", "bố mẹ", "cả nhà",
+            "nhóm", "nhom", "bạn bè", "ban be",
+            "cặp đôi", "cap doi", "vợ chồng", "bạn trai", "bạn gái", "người yêu",
+            "một mình", "mot minh", "1 mình", "mình đi", "solo",
+            " 1 người", " 2 người", " 3 người", " 4 người",
+        ]
+        who_known = any(k in msg for k in _who_kws)
+        pre_who = _extract_who(msg) if who_known else None
+
+        pre_budget = _extract_budget_vp(msg, days)
+        budget_known = pre_budget != "mơ hồ"
+
+        _style_kws = ["biển", "bien", "beach", "tắm", "bơi", "nghỉ dưỡng",
+                      "vui chơi", "vui choi", "vinwonders", "safari", "cả hai", "ca hai"]
+        style_known = any(k in msg for k in _style_kws)
+        pre_style = _extract_vp_style(msg) if style_known else "cả hai"
+
+        # who + budget → generate itinerary via tool
+        if who_known and budget_known:
+            return dispatch_tool("build_itinerary", {
+                "destination_id":   dest_id,
+                "destination_name": dest_name,
+                "days":             days,
+                "who":              pre_who,
+                "budget_tier":      pre_budget,
+                "style":            pre_style,
+            })
+
+        # who known, budget unknown → ask budget (Q2), embed who
+        if who_known:
+            who_embed = f" 👤*(đi với: {_who_label(pre_who)})*"
+            return (
+                f"💰 **Ngân sách** mỗi đêm tại **{dest_name}** khoảng bao nhiêu?{who_embed}\n\n"
+                "1. 💚 Thấp — dưới 3 triệu/đêm\n"
+                "2. 💛 Trung bình — 3–6 triệu/đêm\n"
+                "3. 🔴 Cao — trên 6 triệu/đêm\n\n"
+                "*(Gõ số hoặc mô tả)*"
+            )
+
+        # nothing known → ask who (Q1)
+        budget_hint = f"\n💰*(ngân sách: {pre_budget})* ← đã ghi nhận" if budget_known else ""
+        trip_ctx = f" *(Vinpearl {dest_name} · {days} ngày)*" if dest_name else ""
+        return (
+            f"🤝 **Bạn đi với ai?**{trip_ctx}{budget_hint}\n\n"
+            "1. 👫 Cặp đôi\n"
+            "2. 👨‍👩‍👧 Gia đình (có con nhỏ)\n"
+            "3. 👥 Nhóm bạn\n"
+            "4. 🧍 Một mình\n\n"
+            "*(Gõ số hoặc mô tả)*"
+        )
+
+    # ── Any other travel query → show destinations via tool ───────────────
     _travel_kws = [
         "đi ", "muốn đi", "du lịch", "lịch trình", "lich trinh", "travel", "trip",
         "tour", "khách sạn", "hotel", "gợi ý", "đề xuất", "recommend", "nên đi",
-        "điểm đến", "resort", "nghỉ dưỡng", "nghi duong",
+        "điểm đến", "resort", "nghỉ dưỡng",
     ]
     if any(k in msg for k in _travel_kws):
-        return _VP_REDIRECT_MSG
+        return dispatch_tool("get_destinations", {})
 
     return None
+
+
+# Keep alias for backward-compat
+def _rule_based_reply(user_message: str, history: List[Dict[str, str]] | None = None) -> str | None:
+    return _tool_router(user_message, history)
 
 
 
@@ -2973,6 +3111,198 @@ async def get_travel_response(history: List[Dict[str, str]], session_id: str = "
     return reply
 
 
+# ---------------------------------------------------------------------------
+# Tool dispatcher — implementations for each tool schema
+# ---------------------------------------------------------------------------
+
+def dispatch_tool(name: str, args: dict) -> str:
+    """Execute a tool call and return a string result for the LLM."""
+    try:
+        if name == "get_destinations":
+            return (
+                "Vinpearl có 5 điểm đến:\n"
+                "| ID | Điểm đến | Nổi bật |\n"
+                "|:---:|---|---|\n"
+                "| 1 | 🏝️ Phú Quốc | Đảo ngọc, VinWonders, Safari, resort cao cấp |\n"
+                "| 2 | 🌊 Nha Trang | Biển đẹp, VinWonders, hải sản tươi |\n"
+                "| 3 | 🏖️ Nam Hội An | Vui chơi ven biển, cách phố cổ 30 phút |\n"
+                "| 4 | 🌅 Cửa Hội (Nghệ An) | Biển yên tĩnh, gần thành phố Vinh |\n"
+                "| 5 | ⚓ Hải Phòng | Đảo Cát Bà, cảng biển, ẩm thực phong phú |"
+            )
+
+        if name == "get_rooms":
+            dest_id = int(args.get("destination_id", 1))
+            who = args.get("who", "couple")
+            budget = args.get("budget_tier", "trung")
+            style = args.get("style", "cả hai")
+            dest_name = {1: "Phú Quốc", 2: "Nha Trang", 3: "Nam Hội An",
+                         4: "Cửa Hội", 5: "Hải Phòng"}.get(dest_id, "Phú Quốc")
+            all_rooms = _get_all_dest_rooms(dest_id)
+            return _build_rooms_comparison(all_rooms, who, budget, style, dest_name, nights=1)
+
+        if name == "get_promotions":
+            dest_id = int(args.get("destination_id", 1))
+            dest_name = {1: "Phú Quốc", 2: "Nha Trang", 3: "Nam Hội An",
+                         4: "Cửa Hội", 5: "Hải Phòng"}.get(dest_id, "Phú Quốc")
+            try:
+                from database import get_vp_promotions
+                db_deals = get_vp_promotions(dest_id, 0)
+            except Exception:
+                db_deals = []
+            deals = db_deals or VINPEARL_DEALS
+            rows = []
+            for d in deals:
+                disc = d.get("discount_value") or d.get("discount", "")
+                disc_str = f"{int(disc)}%" if isinstance(disc, (int, float)) and disc else str(disc)
+                cond = d.get("condition_text") or d.get("condition", "")
+                url = d.get("source_url", "https://vinpearl.com/vi/khuyen-mai")
+                title = d.get("name") or d.get("title", "")
+                rows.append(f"| **{title}** | {disc_str} | {cond} | [Xem]({url}) |")
+            return (
+                f"### 🎁 Ưu đãi Vinpearl {dest_name}\n\n"
+                "| Ưu đãi | Giảm | Điều kiện | Chi tiết |\n"
+                "|---|:---:|---|:---:|\n"
+                + "\n".join(rows)
+            )
+
+        if name == "build_itinerary":
+            dest_id = int(args.get("destination_id", 1))
+            dest_name = args.get("destination_name", "Phú Quốc")
+            days = max(1, min(int(args.get("days", 2)), 14))
+            who = args.get("who", "couple")
+            budget = args.get("budget_tier", "trung")
+            style = args.get("style", "cả hai")
+            room = _find_vp_room(who, budget, style, dest_id)
+            deal = _find_vp_deal(room, dest_id)
+            all_rooms = _get_all_dest_rooms(dest_id)
+            return _build_vp_timeline(who, style, room, deal, days, dest_name, dest_id, all_rooms, budget)
+
+        if name == "submit_booking":
+            from database import create_booking
+            from services.telegram_notify import format_vp_booking_telegram, send_telegram_message
+            booking_data = {
+                "city": args.get("destination_name", ""),
+                "hotel_name": args.get("resort_name", "Vinpearl"),
+                "room_type": args.get("room_type", ""),
+                "guest_name": args.get("guest_name", ""),
+                "phone": args.get("phone", ""),
+                "email": args.get("email", ""),
+                "checkin": args.get("checkin", ""),
+                "checkout": args.get("checkout", ""),
+                "num_guests": args.get("num_guests", 2),
+                "notes": args.get("notes", ""),
+            }
+            booking_id = None
+            telegram_ok = False
+            try:
+                booking_id = create_booking(booking_data)
+            except Exception as e:
+                print(f"[DB] create_booking: {e}")
+            try:
+                telegram_ok = send_telegram_message(
+                    format_vp_booking_telegram(booking_data, booking_id)
+                )
+            except Exception as e:
+                print(f"[Telegram] notify: {e}")
+            id_label = f"`#{booking_id:04d}`" if booking_id else "`#---`"
+            tg_line = "📲 Đã gửi thông báo tới nhóm CSKH trên Telegram.\n" if telegram_ok else ""
+            return (
+                f"✅ **Yêu cầu đặt lịch Vinpearl {args.get('destination_name','')}** — {id_label}\n\n"
+                f"| Thông tin | Chi tiết |\n"
+                f"|---|---|\n"
+                f"| 👤 Họ tên | {args.get('guest_name','')} |\n"
+                f"| 📞 SĐT | {args.get('phone','')} |\n"
+                f"| 📧 Email | {args.get('email','')} |\n"
+                f"| 🏨 Phòng | {args.get('room_type','') or 'Theo gợi ý'} |\n\n"
+                f"{tg_line}"
+                "Nhân viên CSKH sẽ liên hệ bạn trong **1–2 giờ làm việc** để xác nhận và tư vấn thêm."
+            )
+
+        return f"[Tool '{name}' không tìm thấy]"
+    except Exception as e:
+        return f"[Tool '{name}' error: {e}]"
+
+
+# ---------------------------------------------------------------------------
+# Tool-calling orchestrator (OpenAI-compatible: works with OpenAI + OpenRouter)
+# ---------------------------------------------------------------------------
+
+async def _call_with_tools(
+    history: List[Dict[str, str]],
+    api_key: str,
+    model: str,
+    base_url: str | None = None,
+) -> tuple:
+    """
+    Run a tool-calling loop with OpenAI-compatible API.
+    Returns (final_reply, usage_dict).
+    """
+    import json
+    from openai import AsyncOpenAI
+    from services.tools import VINBOT_TOOLS, VINBOT_SYSTEM_PROMPT
+
+    client = AsyncOpenAI(api_key=api_key, **({} if not base_url else {"base_url": base_url}))
+    messages: List[Dict] = [{"role": "system", "content": VINBOT_SYSTEM_PROMPT}]
+    for m in history:
+        messages.append({"role": m["role"], "content": m["content"]})
+
+    total_in = 0
+    total_out = 0
+
+    for _iteration in range(6):  # max 6 tool-call rounds
+        response = await client.chat.completions.create(
+            model=model,
+            messages=messages,
+            tools=VINBOT_TOOLS,
+            tool_choice="auto",
+            max_tokens=2500,
+            temperature=0.3,
+        )
+        msg = response.choices[0].message
+        usage = getattr(response, "usage", None)
+        total_in  += getattr(usage, "prompt_tokens",     0) or 0
+        total_out += getattr(usage, "completion_tokens", 0) or 0
+
+        if not msg.tool_calls:
+            # Final text response
+            reply = (msg.content or "").strip()
+            return reply, {
+                "input_tokens":  total_in,
+                "output_tokens": total_out,
+                "total_tokens":  total_in + total_out,
+                "cost_usd":      _calc_cost(model, total_in, total_out),
+            }
+
+        # Append assistant message with tool_calls
+        messages.append({
+            "role": "assistant",
+            "content": msg.content or "",
+            "tool_calls": [
+                {
+                    "id": tc.id,
+                    "type": "function",
+                    "function": {"name": tc.function.name, "arguments": tc.function.arguments},
+                }
+                for tc in msg.tool_calls
+            ],
+        })
+
+        # Execute each tool and append results
+        for tc in msg.tool_calls:
+            try:
+                tool_args = json.loads(tc.function.arguments or "{}")
+            except Exception:
+                tool_args = {}
+            result = dispatch_tool(tc.function.name, tool_args)
+            messages.append({
+                "role": "tool",
+                "tool_call_id": tc.id,
+                "content": result,
+            })
+
+    return "Xin lỗi, đã xảy ra lỗi xử lý yêu cầu của bạn.", {}
+
+
 async def get_travel_response_with_meta(
     history: List[Dict[str, str]],
     session_id: str = "",
@@ -2982,33 +3312,53 @@ async def get_travel_response_with_meta(
     cost, provider, model. Also persists a row to chat_logs.
 
     Priority order:
-      1. _rule_based_reply  → Vinpearl Q&A flow, booking, city guides (chatbot.py)
-      2. vinpearl_bot       → deals, room listing, scope-guard (vinpearl_bot.py)
-      3. AI provider        → free-form questions
+      1. Tool-calling (OpenAI / OpenRouter)  — primary when provider supports tools
+      2. Rule-based fallback                 — when no tool-supporting provider
+      3. Plain AI (Gemini / Claude)          — for free-form questions
     """
+    provider = detect_provider()
+
+    # ── 1. Tool-calling: OpenAI / OpenRouter (full tool support) ─────────────
+    if provider in ("openai", "openrouter", "ollama"):
+        try:
+            if provider == "openai":
+                model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+                reply, usage = await _call_with_tools(
+                    history, api_key=os.getenv("OPENAI_API_KEY", ""), model=model,
+                )
+            elif provider == "openrouter":
+                model = os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")
+                reply, usage = await _call_with_tools(
+                    history,
+                    api_key=os.getenv("OPENROUTER_API_KEY", ""),
+                    model=model,
+                    base_url="https://openrouter.ai/api/v1",
+                )
+            else:  # ollama
+                model = os.getenv("OLLAMA_MODEL", "llama3")
+                base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1"
+                reply, usage = await _call_with_tools(
+                    history, api_key="ollama", model=model, base_url=base_url,
+                )
+
+            if reply:
+                meta = {"provider": provider, "model": model, **usage}
+                _persist_chat_log(history, reply, meta, session_id)
+                return reply, meta
+        except Exception as e:
+            print(f"[tool-calling/{provider}] error: {e} — falling back to rule-based")
+
+    # ── 2. Rule-based fallback (no tool-supporting provider configured) ───────
     last_user_msg = next(
         (m["content"] for m in reversed(history) if m["role"] == "user"), ""
     )
-
-    # ── 1. Rule-based (Vinpearl planning Q&A, booking, etc.) ─────────────────
     rule_reply = _rule_based_reply(last_user_msg, history)
     if rule_reply:
         meta = _build_rule_meta(history, rule_reply)
         _persist_chat_log(history, rule_reply, meta, session_id)
         return rule_reply, meta
 
-    # ── 2. vinpearl_bot (deals list, room list, scope/redirect) ──────────────
-    from services.vinpearl_bot import respond as vinpearl_respond
-    try:
-        vb_reply = await vinpearl_respond(history)
-        if vb_reply:
-            meta = _build_rule_meta(history, vb_reply)
-            _persist_chat_log(history, vb_reply, meta, session_id)
-            return vb_reply, meta
-    except Exception as e:
-        print(f"[vinpearl_bot] error: {e}")
-
-    # ── 3. AI provider ────────────────────────────────────────────────────────
+    # ── 3. Plain AI (Gemini / Claude) or final fallback ───────────────────────
     return await _legacy_response(history, session_id=session_id)
 
 
