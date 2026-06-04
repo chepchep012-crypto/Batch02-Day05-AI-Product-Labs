@@ -178,6 +178,7 @@ async def _call_openai_compat(
     api_key: str,
     model: str,
     base_url: str | None = None,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> str:
     """OpenAI / OpenRouter / Ollama — all share the same OpenAI-compatible API."""
     from openai import AsyncOpenAI
@@ -187,7 +188,7 @@ async def _call_openai_compat(
         kwargs["base_url"] = base_url
 
     client = AsyncOpenAI(**kwargs)
-    messages = [{"role": "system", "content": SYSTEM_PROMPT}] + history
+    messages = [{"role": "system", "content": system_prompt}] + history
     response = await client.chat.completions.create(
         model=model,
         messages=messages,
@@ -201,6 +202,7 @@ async def _call_gemini(
     history: List[Dict[str, str]],
     api_key: str,
     model: str,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> str:
     """Google Gemini via google-generativeai SDK."""
     import google.generativeai as genai
@@ -217,7 +219,7 @@ async def _call_gemini(
 
     gemini_model = genai.GenerativeModel(
         model_name=model,
-        system_instruction=SYSTEM_PROMPT,
+        system_instruction=system_prompt,
     )
     chat = gemini_model.start_chat(history=gemini_history)
     response = await chat.send_message_async(last_message)
@@ -228,6 +230,7 @@ async def _call_claude(
     history: List[Dict[str, str]],
     api_key: str,
     model: str,
+    system_prompt: str = SYSTEM_PROMPT,
 ) -> str:
     """Anthropic Claude via anthropic SDK."""
     from anthropic import AsyncAnthropic
@@ -236,7 +239,7 @@ async def _call_claude(
     messages = [{"role": m["role"], "content": m["content"]} for m in history]
     response = await client.messages.create(
         model=model,
-        system=SYSTEM_PROMPT,
+        system=system_prompt,
         messages=messages,
         max_tokens=800,
     )
@@ -1159,6 +1162,18 @@ def _rule_based_reply(user_message: str, history: List[Dict[str, str]] | None = 
 # ---------------------------------------------------------------------------
 
 async def get_travel_response(history: List[Dict[str, str]]) -> str:
+    # Vinpearl bot xử lý toàn bộ: phân loại câu hỏi, 3 chức năng, grounding LLM,
+    # điều hướng (ngoài Vinpearl / ngoài chủ đề). Dữ liệu & luật ở data/vinpearl.json.
+    from services.vinpearl_bot import respond as vinpearl_respond
+    try:
+        return await vinpearl_respond(history)
+    except Exception as e:
+        print(f"[vinpearl] fatal: {e} — fallback legacy")
+
+    return await _legacy_response(history)
+
+
+async def _legacy_response(history: List[Dict[str, str]]) -> str:
     provider = detect_provider()
     print(f"[AI] Using provider: {provider}")
 

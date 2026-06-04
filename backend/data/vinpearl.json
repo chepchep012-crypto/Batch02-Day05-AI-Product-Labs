@@ -1,0 +1,447 @@
+{
+  "_meta": {
+    "purpose": "Mock data cố định cho chatbot Vinpearl (prototype Day 06).",
+    "rule": "Bot CHỈ được chọn từ file này. Không tự sinh phòng/ưu đãi/địa điểm. Khi không khớp -> nói 'chưa có' hoặc điều hướng.",
+    "note_gia_uu_dai": "Tên cơ sở & điểm đến là THẬT. Giá phòng và ưu đãi là SỐ MẪU hợp lý cho prototype, không phải giá realtime. Mỗi mục kèm 'source' để bấm 'xem nguồn'.",
+    "today_assumed": "2026-06-04",
+    "version": 1
+  },
+
+  "links": {
+    "all_hotels":        { "label": "🏨 Xem tất cả khách sạn Vinpearl", "url": "https://vinpearl.com/vi/hotels" },
+    "booking_home":      { "label": "🛏️ Đặt phòng trên Vinpearl", "url": "https://vinpearl.com/vi/booking" },
+    "promotions":        { "label": "🎁 Trang ưu đãi & khuyến mãi Vinpearl", "url": "https://vinpearl.com/vi/uu-dai" },
+    "vinwonders_ticket": { "label": "🎟️ Đặt vé VinWonders & Safari", "url": "https://booking.vinwonders.com/" },
+    "hotline":           { "label": "📞 Hotline Vinpearl 1900 232389", "url": "tel:1900232389" },
+    "homepage":          { "label": "🌐 Trang chủ Vinpearl", "url": "https://vinpearl.com/vi/" }
+  },
+
+  "redirects": {
+    "no_room": {
+      "message": "Rất tiếc, loại phòng bạn cần tại **{hotel}** hiện đã **hết phòng**. 🙏\nBạn có thể chọn hướng khác:",
+      "show_links": ["all_hotels", "booking_home", "hotline"]
+    },
+    "no_deal": {
+      "message": "Hiện **chưa có ưu đãi phù hợp** cho {place} vào thời điểm này. 🙏\nBạn có thể theo dõi ưu đãi mới tại:",
+      "show_links": ["promotions", "homepage"]
+    },
+    "booking": {
+      "message": "Bạn có thể đặt phòng trực tiếp tại đây:",
+      "show_links": ["booking_home", "hotline"]
+    }
+  },
+
+  "destinations": {
+    "phu-quoc": {
+      "name": "Phú Quốc",
+      "aliases": ["phu quoc", "phú quốc", "phuquoc", "đảo ngọc"],
+      "region": "Kiên Giang (Nam Bộ)",
+      "has_vinwonders": true,
+      "has_safari": true,
+      "has_golf": true,
+      "intro": "Đảo Ngọc — nơi có VinWonders, Vinpearl Safari, Grand World và Cầu Hôn, bãi Dài cát trắng.",
+      "attractions": [
+        { "name": "VinWonders Phú Quốc", "open": "10:00–19:30", "note": "Công viên giải trí lớn nhất VN (~50ha)", "source": "https://vinwonders.com/vi/vinwonders-phu-quoc/" },
+        { "name": "Vinpearl Safari Phú Quốc", "open": "09:00–16:00", "note": "Show thú 10:00 & 14:00 (nghỉ T3, T4)", "source": "https://vinwonders.com/vi/vinpearl-safari-phu-quoc/" },
+        { "name": "Grand World Phú Quốc", "open": "Cả ngày", "note": "Show 'Tinh hoa Việt Nam', Cầu Hôn, sông Venice", "source": "https://vinwonders.com/vi/grand-world-phu-quoc/" }
+      ],
+      "source": "https://vinwonders.com/vi/wonderpedia/news/vinpearl-phu-quoc/"
+    },
+    "nha-trang": {
+      "name": "Nha Trang",
+      "aliases": ["nha trang", "nhatrang", "hòn tre"],
+      "region": "Khánh Hòa (Nam Trung Bộ)",
+      "has_vinwonders": true,
+      "has_safari": false,
+      "has_golf": false,
+      "intro": "Vịnh biển đẹp với VinWonders trên đảo Hòn Tre và cáp treo vượt biển dài 3,3km.",
+      "attractions": [
+        { "name": "VinWonders Nha Trang", "open": "08:30–20:00", "note": "Trên đảo Hòn Tre, công viên nước + thủy cung", "source": "https://vinwonders.com/vi/vinwonders-nha-trang/" },
+        { "name": "Cáp treo vượt biển Hòn Tre", "open": "08:00–21:00", "note": "Cáp treo trên biển dài 3,3km", "source": "https://vinwonders.com/vi/vinwonders-nha-trang/" }
+      ],
+      "source": "https://vinwonders.com/vi/wonderpedia/news/vinpearl-resort-spa-nha-trang-bay/"
+    },
+    "nam-hoi-an": {
+      "name": "Nam Hội An",
+      "aliases": ["nam hoi an", "nam hội an", "hoi an", "hội an"],
+      "region": "Quảng Nam (Trung Bộ)",
+      "has_vinwonders": true,
+      "has_safari": false,
+      "has_golf": true,
+      "intro": "Cách phố cổ Hội An ~15km, có VinWonders Nam Hội An kết hợp giải trí và văn hoá dân gian.",
+      "attractions": [
+        { "name": "VinWonders Nam Hội An", "open": "09:00–20:00", "note": "Đảo văn hoá dân gian, bến Cảng Giao Thoa, show diễn", "source": "https://vinwonders.com/vi/vinwonders-nam-hoi-an/" }
+      ],
+      "source": "https://vinwonders.com/vi/vinwonders-nam-hoi-an/"
+    },
+    "ha-long": {
+      "name": "Hạ Long",
+      "aliases": ["ha long", "hạ long", "halong", "quảng ninh"],
+      "region": "Quảng Ninh (Bắc Bộ)",
+      "has_vinwonders": false,
+      "has_safari": false,
+      "has_golf": false,
+      "intro": "Vịnh Hạ Long di sản UNESCO, Vinpearl Resort & Spa Hạ Long nằm trên đảo Rều biệt lập.",
+      "attractions": [
+        { "name": "Vịnh Hạ Long", "open": "Cả ngày", "note": "Di sản thiên nhiên thế giới, du thuyền ngắm vịnh", "source": "https://vinpearl.com/vi/" }
+      ],
+      "source": "https://vinpearl.com/vi/"
+    },
+    "da-nang": {
+      "name": "Đà Nẵng",
+      "aliases": ["da nang", "đà nẵng", "danang"],
+      "region": "Đà Nẵng (Trung Bộ)",
+      "has_vinwonders": false,
+      "has_safari": false,
+      "has_golf": false,
+      "intro": "Thành phố biển, Vinpearl Condotel Riverfront ven sông Hàn, gần biển Mỹ Khê.",
+      "attractions": [
+        { "name": "Biển Mỹ Khê", "open": "Cả ngày", "note": "Một trong những bãi biển đẹp nhất hành tinh", "source": "https://vinpearl.com/vi/" }
+      ],
+      "source": "https://vinpearl.com/vi/"
+    }
+  },
+
+  "hotels": {
+    "phu-quoc": [
+      {
+        "id": "vr-spa-pq",
+        "name": "Vinpearl Resort & Spa Phú Quốc",
+        "star": 5,
+        "area": "Bãi Dài",
+        "rooms": [
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2800000, "status": "available" },
+          { "type": "Suite Ocean View", "guests": 2, "price_vnd": 5500000, "status": "sold_out" },
+          { "type": "Villa 2 phòng ngủ", "guests": 4, "price_vnd": 9800000, "status": "available" }
+        ],
+        "phone": "+84 297 3550 555",
+        "website": "https://vinpearl.com/vi/vinpearl-resort-spa-phu-quoc",
+        "booking_url": "https://vinpearl.com/vi/booking?hotel=vr-spa-pq",
+        "source": "https://vinpearl.com/vi/vinpearl-resort-spa-phu-quoc"
+      },
+      {
+        "id": "wonderworld-pq",
+        "name": "Vinpearl Wonderworld Phú Quốc",
+        "star": 5,
+        "area": "Gành Dầu",
+        "rooms": [
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2400000, "status": "available" },
+          { "type": "Family Suite", "guests": 4, "price_vnd": 4200000, "status": "available" }
+        ],
+        "phone": "+84 297 3650 999",
+        "website": "https://vinpearl.com/vi/",
+        "booking_url": "https://vinpearl.com/vi/booking?hotel=wonderworld-pq",
+        "source": "https://vinpearl.com/vi/"
+      }
+    ],
+    "nha-trang": [
+      {
+        "id": "vr-spa-nt-bay",
+        "name": "Vinpearl Resort & Spa Nha Trang Bay",
+        "star": 5,
+        "area": "Đảo Hòn Tre",
+        "rooms": [
+          { "type": "Deluxe", "guests": 2, "price_vnd": 3200000, "status": "available" },
+          { "type": "Suite", "guests": 2, "price_vnd": 6500000, "status": "available" }
+        ],
+        "phone": "+84 258 3598 900",
+        "website": "https://vinpearl.com/vi/vinpearl-resort-spa-nha-trang-bay",
+        "booking_url": "https://vinpearl.com/vi/booking?hotel=vr-spa-nt-bay",
+        "source": "https://vinwonders.com/vi/wonderpedia/news/vinpearl-resort-spa-nha-trang-bay/"
+      },
+      {
+        "id": "vr-nt",
+        "name": "Vinpearl Resort Nha Trang",
+        "star": 5,
+        "area": "Đảo Hòn Tre",
+        "rooms": [
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2900000, "status": "sold_out" },
+          { "type": "Villa", "guests": 6, "price_vnd": 12000000, "status": "available" }
+        ],
+        "phone": "+84 258 3590 611",
+        "website": "https://vinpearl.com/vi/",
+        "booking_url": "https://vinpearl.com/vi/booking?hotel=vr-nt",
+        "source": "https://www.tripadvisor.com/Hotel_Review-g293928-d446818-Reviews-Vinpearl_Resort_Nha_Trang.html"
+      }
+    ],
+    "nam-hoi-an": [
+      {
+        "id": "vr-spa-nha",
+        "name": "Vinpearl Resort & Spa Nam Hội An",
+        "star": 5,
+        "area": "Bình Minh, Thăng Bình",
+        "rooms": [
+          { "type": "Deluxe", "guests": 2, "price_vnd": 2600000, "status": "available" },
+          { "type": "Villa hướng biển", "guests": 4, "price_vnd": 8800000, "status": "available" }
+        ],
+        "phone": "+84 235 3758 999",
+        "website": "https://vinpearl.com/vi/",
+        "booking_url": "https://vinpearl.com/vi/booking?hotel=vr-spa-nha",
+        "source": "https://vinwonders.com/vi/vinwonders-nam-hoi-an/"
+      }
+    ],
+    "ha-long": [
+      {
+        "id": "vr-spa-hl",
+        "name": "Vinpearl Resort & Spa Hạ Long",
+        "star": 5,
+        "area": "Đảo Rều, Bãi Cháy",
+        "rooms": [
+          { "type": "Deluxe hướng vịnh", "guests": 2, "price_vnd": 3000000, "status": "sold_out" },
+          { "type": "Suite hướng vịnh", "guests": 2, "price_vnd": 6200000, "status": "sold_out" }
+        ],
+        "phone": "+84 203 3618 888",
+        "website": "https://vinpearl.com/vi/",
+        "booking_url": "https://vinpearl.com/vi/booking?hotel=vr-spa-hl",
+        "source": "https://vinpearl.com/vi/"
+      }
+    ],
+    "da-nang": [
+      {
+        "id": "vr-riverfront-dn",
+        "name": "Vinpearl Condotel Riverfront Đà Nẵng",
+        "star": 5,
+        "area": "Ven sông Hàn",
+        "rooms": [
+          { "type": "Deluxe sông Hàn", "guests": 2, "price_vnd": 2200000, "status": "available" },
+          { "type": "Suite gia đình", "guests": 4, "price_vnd": 4500000, "status": "available" }
+        ],
+        "phone": "+84 236 3646 888",
+        "website": "https://vinpearl.com/vi/",
+        "booking_url": "https://vinpearl.com/vi/booking?hotel=vr-riverfront-dn",
+        "source": "https://vinpearl.com/vi/"
+      }
+    ]
+  },
+
+  "itineraries": {
+    "phu-quoc": [
+      {
+        "id": "pq-2n1d-vuichoi",
+        "duration": "2N1Đ",
+        "style": "vui chơi",
+        "suggest_hotel": "vr-spa-pq",
+        "days": [
+          {
+            "day": 1,
+            "morning":   { "activity": "VinWonders Phú Quốc", "reason": "Công viên lớn nhất VN, đi sớm lúc mở cửa 10:00 để chơi hết khu" },
+            "afternoon": { "activity": "Vinpearl Safari Phú Quốc", "reason": "Bắt show thú 14:00; chung tuyến xe shuttle miễn phí với VinWonders nên không mất thời gian di chuyển" },
+            "evening":   { "activity": "Grand World — show 'Tinh hoa Việt Nam' + Cầu Hôn", "reason": "Đi bộ nhẹ buổi tối, ăn tối và xem show ngay gần khu nghỉ" }
+          },
+          {
+            "day": 2,
+            "morning":   { "activity": "Tắm biển Bãi Dài + nghỉ tại resort", "reason": "Sáng thư giãn ở bãi biển trước khu nghỉ, không cần di chuyển xa" },
+            "afternoon": { "activity": "Mua đặc sản (nước mắm, sim) & ra sân bay", "reason": "Gói gọn trước chuyến bay chiều, tránh vội" }
+          }
+        ],
+        "source": "https://vinwonders.com/vi/wonderpedia/news/lich-trinh-du-lich-phu-quoc/"
+      },
+      {
+        "id": "pq-2n1d-nghiduong",
+        "duration": "2N1Đ",
+        "style": "nghỉ dưỡng",
+        "suggest_hotel": "vr-spa-pq",
+        "days": [
+          {
+            "day": 1,
+            "morning":   { "activity": "Check-in resort & tắm hồ bơi", "reason": "Hồ bơi gần 5.000m², phù hợp nghỉ dưỡng thư giãn" },
+            "afternoon": { "activity": "Spa + tắm biển Bãi Dài", "reason": "Bãi biển riêng yên tĩnh trước resort" },
+            "evening":   { "activity": "Ăn tối hải sản + ngắm hoàng hôn", "reason": "Bãi Dài là hướng tây, ngắm hoàng hôn đẹp" }
+          },
+          {
+            "day": 2,
+            "morning":   { "activity": "Yoga sáng / dạo biển", "reason": "Nhịp chậm đúng tinh thần nghỉ dưỡng" },
+            "afternoon": { "activity": "Thư giãn & trả phòng", "reason": "Không nhồi lịch, giữ sức cho chuyến về" }
+          }
+        ],
+        "source": "https://vinpearl.com/vi/vinpearl-resort-spa-phu-quoc"
+      }
+    ],
+    "nha-trang": [
+      {
+        "id": "nt-2n1d-vuichoi",
+        "duration": "2N1Đ",
+        "style": "vui chơi",
+        "suggest_hotel": "vr-spa-nt-bay",
+        "days": [
+          {
+            "day": 1,
+            "morning":   { "activity": "Cáp treo vượt biển ra Hòn Tre", "reason": "Trải nghiệm cáp treo trên biển dài 3,3km, ngắm vịnh từ trên cao" },
+            "afternoon": { "activity": "VinWonders Nha Trang", "reason": "Công viên nước + thủy cung ngay trên đảo, chơi cả buổi" },
+            "evening":   { "activity": "Ăn tối tại resort trên đảo", "reason": "Tránh đi cáp treo về muộn, nghỉ lại đảo tiện hơn" }
+          },
+          {
+            "day": 2,
+            "morning":   { "activity": "Tắm biển & hồ bơi resort", "reason": "Tận hưởng bãi biển đảo Hòn Tre buổi sáng" },
+            "afternoon": { "activity": "Cáp treo về đất liền & rời đi", "reason": "Về sớm tránh đông cuối ngày" }
+          }
+        ],
+        "source": "https://vinwonders.com/vi/vinwonders-nha-trang/"
+      }
+    ],
+    "nam-hoi-an": [
+      {
+        "id": "nha-2n1d-vanhoa",
+        "duration": "2N1Đ",
+        "style": "văn hoá",
+        "suggest_hotel": "vr-spa-nha",
+        "days": [
+          {
+            "day": 1,
+            "morning":   { "activity": "VinWonders Nam Hội An — Đảo văn hoá dân gian", "reason": "Tái hiện làng nghề, kiến trúc truyền thống Việt" },
+            "afternoon": { "activity": "Bến Cảng Giao Thoa + show diễn", "reason": "Khu phố thương cảng cổ, nhiều góc chụp ảnh" },
+            "evening":   { "activity": "Nghỉ tại resort ven biển Bình Minh", "reason": "Resort sát biển, yên tĩnh sau ngày tham quan" }
+          },
+          {
+            "day": 2,
+            "morning":   { "activity": "Day-trip phố cổ Hội An (~15km)", "reason": "Phố cổ UNESCO gần resort, đi sáng tránh nắng" },
+            "afternoon": { "activity": "Về resort nghỉ & trả phòng", "reason": "Khép lịch nhẹ nhàng" }
+          }
+        ],
+        "source": "https://vinwonders.com/vi/vinwonders-nam-hoi-an/"
+      }
+    ],
+    "ha-long": [
+      {
+        "id": "hl-2n1d-nghiduong",
+        "duration": "2N1Đ",
+        "style": "nghỉ dưỡng",
+        "suggest_hotel": "vr-spa-hl",
+        "days": [
+          {
+            "day": 1,
+            "morning":   { "activity": "Check-in resort đảo Rều", "reason": "Resort trên đảo biệt lập, đi tàu/cano ngắn từ Bãi Cháy" },
+            "afternoon": { "activity": "Du thuyền ngắm vịnh Hạ Long", "reason": "Vịnh di sản UNESCO, ngắm hòn Trống Mái, hang động" },
+            "evening":   { "activity": "Ăn tối hải sản tại resort", "reason": "Nghỉ lại đảo, không cần về đất liền tối" }
+          },
+          {
+            "day": 2,
+            "morning":   { "activity": "Tắm biển & hồ bơi vô cực", "reason": "Hồ bơi hướng vịnh, thư giãn buổi sáng" },
+            "afternoon": { "activity": "Về Bãi Cháy & rời đi", "reason": "Khép chuyến đúng giờ tàu" }
+          }
+        ],
+        "source": "https://vinpearl.com/vi/"
+      }
+    ],
+    "da-nang": [
+      {
+        "id": "dn-2n1d-nghiduong",
+        "duration": "2N1Đ",
+        "style": "nghỉ dưỡng",
+        "suggest_hotel": "vr-riverfront-dn",
+        "days": [
+          {
+            "day": 1,
+            "morning":   { "activity": "Check-in Vinpearl Condotel Riverfront", "reason": "Vị trí ven sông Hàn, trung tâm, tiện di chuyển" },
+            "afternoon": { "activity": "Tắm biển Mỹ Khê", "reason": "Bãi biển đẹp cách khách sạn vài phút" },
+            "evening":   { "activity": "Ngắm Cầu Rồng (T7/CN phun lửa) & ăn tối ven sông", "reason": "Cầu Rồng phun lửa cuối tuần, đi bộ dọc sông Hàn" }
+          },
+          {
+            "day": 2,
+            "morning":   { "activity": "Cà phê ven sông & mua đặc sản", "reason": "Nhịp chậm buổi sáng trước khi về" },
+            "afternoon": { "activity": "Trả phòng & ra sân bay", "reason": "Sân bay Đà Nẵng gần trung tâm, không cần đi sớm" }
+          }
+        ],
+        "source": "https://vinpearl.com/vi/"
+      }
+    ]
+  },
+
+  "deals": {
+    "phu-quoc": [
+      {
+        "id": "pq-combo-stay-play",
+        "title": "Combo Nghỉ dưỡng + Vé VinWonders & Safari giảm 25%",
+        "discount": "-25%",
+        "valid_from": "2026-05-01",
+        "valid_to": "2026-08-31",
+        "applies_to": "vr-spa-pq",
+        "conditions": "Đặt tối thiểu 2 đêm, áp dụng T2–T5",
+        "source": "https://vinwonders.com/vi/"
+      },
+      {
+        "id": "pq-summer-villa",
+        "title": "Ưu đãi hè Villa — tặng đưa đón sân bay",
+        "discount": "Tặng đưa đón + ăn sáng",
+        "valid_from": "2026-06-01",
+        "valid_to": "2026-09-30",
+        "applies_to": "vr-spa-pq",
+        "conditions": "Áp dụng hạng Villa, đặt trực tiếp website Vinpearl",
+        "source": "https://vinpearl.com/vi/"
+      }
+    ],
+    "nha-trang": [
+      {
+        "id": "nt-earlybird",
+        "title": "Đặt sớm 30 ngày giảm 20% + miễn phí cáp treo",
+        "discount": "-20%",
+        "valid_from": "2026-04-15",
+        "valid_to": "2026-07-31",
+        "applies_to": "vr-spa-nt-bay",
+        "conditions": "Đặt trước ngày nhận phòng tối thiểu 30 ngày",
+        "source": "https://vinwonders.com/vi/"
+      }
+    ],
+    "nam-hoi-an": [
+      {
+        "id": "nha-family",
+        "title": "Gói gia đình — trẻ em dưới 12 tuổi miễn phí vé VinWonders",
+        "discount": "Trẻ em free vé",
+        "valid_from": "2026-06-01",
+        "valid_to": "2026-08-15",
+        "applies_to": "vr-spa-nha",
+        "conditions": "1 trẻ free đi kèm 1 người lớn",
+        "source": "https://vinwonders.com/vi/vinwonders-nam-hoi-an/"
+      }
+    ],
+    "ha-long": [],
+    "da-nang": [
+      {
+        "id": "dn-expired-lunar",
+        "title": "Ưu đãi Tết — giảm 30%",
+        "discount": "-30%",
+        "valid_from": "2026-01-20",
+        "valid_to": "2026-02-28",
+        "applies_to": "vr-riverfront-dn",
+        "conditions": "Đã hết hạn (chỉ để demo path 'ngoài hạn')",
+        "source": "https://vinpearl.com/vi/"
+      }
+    ]
+  },
+
+  "scope": {
+    "domain": "Chỉ tư vấn du lịch Vinpearl: lịch trình, phòng/khách sạn, ưu đãi tại các điểm đến Vinpearl.",
+    "in_scope_keywords": [
+      "du lịch", "lịch trình", "đi chơi", "tham quan", "vinwonders", "safari", "vinpearl",
+      "phòng", "khách sạn", "resort", "đặt phòng", "lưu trú",
+      "ưu đãi", "khuyến mãi", "giảm giá", "combo", "voucher", "vé",
+      "nghỉ dưỡng", "biển", "vui chơi", "văn hoá", "ngày", "đêm", "2n1đ"
+    ],
+    "greeting_keywords": ["xin chào", "chào", "hello", "hi", "alo", "bot ơi"],
+    "out_of_scope_message": "Xin lỗi, tôi không có thông tin về vấn đề này. 🙏\n\nTôi là trợ lý du lịch Vinpearl — tôi chỉ có thể giúp bạn về **lịch trình**, **phòng nghỉ** và **ưu đãi** tại các điểm đến Vinpearl (Phú Quốc, Nha Trang, Nam Hội An, Hạ Long, Đà Nẵng).",
+    "greeting_message": "Xin chào! 👋 Tôi là trợ lý du lịch Vinpearl.\n\nTôi có thể giúp bạn:\n- 🗺️ Gợi ý **lịch trình** tại điểm đến Vinpearl\n- 🛏️ Tra **phòng / khách sạn** Vinpearl theo khu vực\n- 🎁 Xem **ưu đãi** đang áp dụng\n\nBạn muốn đi đâu? (Phú Quốc, Nha Trang, Nam Hội An, Hạ Long, Đà Nẵng)"
+  },
+
+  "non_vinpearl_redirect": {
+    "default": {
+      "message": "Xin lỗi, Vinpearl hiện chưa có cơ sở nghỉ dưỡng tại {place}. 🙏",
+      "show_links": ["all_hotels", "vinwonders_ticket"]
+    },
+    "known_places": {
+      "sapa": { "nearest": "ha-long" },
+      "đà lạt": { "nearest": "nha-trang" },
+      "da lat": { "nearest": "nha-trang" },
+      "huế": { "nearest": "da-nang" },
+      "hue": { "nearest": "da-nang" },
+      "hà nội": { "nearest": "ha-long" },
+      "ha noi": { "nearest": "ha-long" },
+      "sài gòn": { "nearest": "phu-quoc" },
+      "sai gon": { "nearest": "phu-quoc" },
+      "tp hcm": { "nearest": "phu-quoc" },
+      "bangkok": { "nearest": null },
+      "tokyo": { "nearest": null },
+      "paris": { "nearest": null },
+      "bali": { "nearest": null }
+    }
+  }
+}
