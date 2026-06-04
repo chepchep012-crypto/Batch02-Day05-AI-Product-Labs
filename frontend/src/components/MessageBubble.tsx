@@ -29,8 +29,8 @@ export default function MessageBubble({ message }: Props) {
   return (
     <div className="flex gap-3 mb-5 px-4 group">
       {/* Bot avatar */}
-      <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center text-white text-xs flex-shrink-0 mt-0.5">
-        ✈
+      <div className="w-7 h-7 rounded-full bg-green-700 flex items-center justify-center text-white text-xs flex-shrink-0 mt-0.5">
+        🌴
       </div>
 
       {/* Bot message — plain text, no bubble */}

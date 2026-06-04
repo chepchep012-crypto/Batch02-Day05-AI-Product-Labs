@@ -11,10 +11,10 @@ interface Props {
 }
 
 const SUGGESTIONS = [
-  { label: "✨ Truyền cảm hứng cho tôi!", prompt: "Gợi ý cho tôi một điểm đến thú vị nhé" },
-  { label: "📍 Hà Nội có gì hay?",        prompt: "Hà Nội có gì hay?" },
-  { label: "🗺️ Lên lịch trình Đà Nẵng",  prompt: "Lên lịch trình 3 ngày ở Đà Nẵng cho tôi" },
-  { label: "🗼 Best of Tokyo",             prompt: "What are the best things to do in Tokyo?" },
+  { label: "🗺️ Lên lịch 2N1Đ Vinpearl",    prompt: "Giúp tôi lên lịch trình 2 ngày 1 đêm Vinpearl Phú Quốc" },
+  { label: "🎢 VinWonders hay Safari trước?", prompt: "Nên đi VinWonders hay Vinpearl Safari trước trong 2N1Đ?" },
+  { label: "🏨 Chọn khu phòng Vinpearl",     prompt: "Tư vấn chọn khu phòng Vinpearl Phú Quốc cho gia đình" },
+  { label: "🎁 Ưu đãi Vinpearl hiện tại",    prompt: "Vinpearl Phú Quốc có ưu đãi gì đang áp dụng không?" },
 ];
 
 export default function ChatWindow({ messages, loading, onSend }: Props) {
@@ -34,12 +34,12 @@ export default function ChatWindow({ messages, loading, onSend }: Props) {
           /* Welcome screen */
           <div className="max-w-xl mx-auto px-4">
             <div className="flex gap-3 mb-5">
-              <div className="w-7 h-7 rounded-full bg-gray-900 flex items-center justify-center text-white text-xs flex-shrink-0 mt-0.5">
-                ✈
+              <div className="w-7 h-7 rounded-full bg-green-700 flex items-center justify-center text-white text-xs flex-shrink-0 mt-0.5">
+                🌴
               </div>
               <div className="text-sm text-gray-800 leading-relaxed">
-                <p>Xin chào! Tôi là <strong>TravelBot</strong> — trợ lý du lịch AI của bạn. 🌍</p>
-                <p className="mt-1 text-gray-500">Hỏi tôi về điểm đến, lịch trình, khách sạn, nhà hàng hay bất cứ điều gì về chuyến đi nhé!</p>
+                <p>Xin chào! Tôi là <strong>VinBot</strong> — trợ lý AI lên lịch Vinpearl Phú Quốc. 🌴</p>
+                <p className="mt-1 text-gray-500">Tôi sẽ hỏi bạn 3 câu ngắn, rồi đề xuất lịch trình 2N1Đ, khu phòng và ưu đãi thật phù hợp nhất!</p>
               </div>
             </div>
 

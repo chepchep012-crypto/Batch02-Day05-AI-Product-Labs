@@ -2,7 +2,8 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 COPY package*.json ./
-RUN npm install
+# devDependencies (typescript, vite) are required for `npm run build`
+RUN npm ci --include=dev
 COPY . .
 RUN npm run build
 

@@ -149,7 +149,7 @@ export default function App() {
             </svg>
           </button>
           <span className="font-semibold text-gray-900 text-base tracking-tight">
-            ✈️ TravelBot
+            🌴 VinBot — Vinpearl Phú Quốc
           </span>
         </div>
 
