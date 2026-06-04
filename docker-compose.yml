@@ -1,13 +1,11 @@
-version: "3.9"
-
 services:
   db:
     image: postgres:16-alpine
     container_name: travel-chatbot-db
     environment:
-      - POSTGRES_USER=${POSTGRES_USER:-chatbot}
-      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-chatbot123}
-      - POSTGRES_DB=${POSTGRES_DB:-chatbot_db}
+      POSTGRES_USER: ${POSTGRES_USER:-chatbot}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-chatbot123}
+      POSTGRES_DB: ${POSTGRES_DB:-chatbot_db}
     ports:
       - "5432:5432"
     volumes:
@@ -26,12 +24,20 @@ services:
       context: ./backend
       dockerfile: Dockerfile
     container_name: travel-chatbot-backend
+    env_file:
+      - .env
     ports:
       - "8000:8000"
     environment:
       - OPENAI_API_KEY=${OPENAI_API_KEY:-}
+      - GEMINI_API_KEY=${GEMINI_API_KEY:-}
+      - CLAUDE_API_KEY=${CLAUDE_API_KEY:-}
+      - OPENROUTER_API_KEY=${OPENROUTER_API_KEY:-}
+      - AI_PROVIDER=${AI_PROVIDER:-}
       - CORS_ORIGINS=http://localhost:3000
       - DATABASE_URL=postgresql://${POSTGRES_USER:-chatbot}:${POSTGRES_PASSWORD:-chatbot123}@db:5432/${POSTGRES_DB:-chatbot_db}
+      - TELEGRAM_BOT_TOKEN=${TELEGRAM_BOT_TOKEN:-}
+      - TELEGRAM_CHAT_ID=${TELEGRAM_CHAT_ID:-}
     volumes:
       - ./backend:/app
     depends_on:

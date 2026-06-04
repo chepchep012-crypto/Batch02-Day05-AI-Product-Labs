@@ -6,17 +6,19 @@ from dotenv import load_dotenv
 from routers import chat
 from routers import booking as booking_router
 from services.chatbot import detect_provider
-from database import init_db
+from database import init_db, init_vinpearl_db, seed_vinpearl_data
 
 load_dotenv()
 
 app = FastAPI(
-    title="Day5-6-Lap--Hackthon-Travel Chatbot API",
-    version="1.0.0",
+    title="VinBot — Vinpearl Phú Quốc AI Planner",
+    version="2.0.0",
 )
 
-# Initialise SQLite database on startup
+# Initialise SQLite databases on startup
 init_db()
+init_vinpearl_db()
+seed_vinpearl_data()
 
 origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 
