@@ -32,7 +32,7 @@ export default function ChatWindow({ messages, loading, onSend }: Props) {
       <div className="flex-1 overflow-y-auto py-6">
         {isEmpty ? (
           /* Welcome screen */
-          <div className="max-w-xl mx-auto px-4">
+          <div className="max-w-3xl mx-auto px-4">
             <div className="flex gap-3 mb-5">
               <div className="w-7 h-7 rounded-full bg-green-700 flex items-center justify-center text-white text-xs flex-shrink-0 mt-0.5">
                 🌴
@@ -58,7 +58,7 @@ export default function ChatWindow({ messages, loading, onSend }: Props) {
             </div>
           </div>
         ) : (
-          <div className="max-w-xl mx-auto">
+          <div className="max-w-3xl mx-auto">
             {messages.map((m) => <MessageBubble key={m.id} message={m} />)}
             {loading && <TypingIndicator />}
           </div>
@@ -67,7 +67,7 @@ export default function ChatWindow({ messages, loading, onSend }: Props) {
       </div>
 
       {/* Input */}
-      <div className="max-w-xl mx-auto w-full pb-2">
+      <div className="max-w-3xl mx-auto w-full pb-2">
         <ChatInput onSend={onSend} disabled={loading} />
       </div>
     </div>

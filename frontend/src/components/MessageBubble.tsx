@@ -1,4 +1,5 @@
 import ReactMarkdown from "react-markdown";
+import remarkGfm from "remark-gfm";
 import { useState } from "react";
 import { Message } from "../types";
 
@@ -33,10 +34,50 @@ export default function MessageBubble({ message }: Props) {
         🌴
       </div>
 
-      {/* Bot message — plain text, no bubble */}
-      <div className="flex-1 min-w-0">
-        <div className="text-sm text-gray-800 leading-relaxed prose-chat">
-          <ReactMarkdown>{message.content}</ReactMarkdown>
+      {/* Bot message */}
+      <div className="flex-1 min-w-0 overflow-x-auto">
+        <div className="text-sm text-gray-800 leading-relaxed markdown-body">
+          <ReactMarkdown
+            remarkPlugins={[remarkGfm]}
+            components={{
+              table: ({ children }) => (
+                <div className="overflow-x-auto my-3">
+                  <table className="min-w-full border-collapse text-xs">{children}</table>
+                </div>
+              ),
+              thead: ({ children }) => (
+                <thead className="bg-gray-100 text-gray-700">{children}</thead>
+              ),
+              tbody: ({ children }) => <tbody>{children}</tbody>,
+              tr: ({ children }) => (
+                <tr className="border-b border-gray-200 hover:bg-gray-50">{children}</tr>
+              ),
+              th: ({ children }) => (
+                <th className="px-3 py-2 text-left font-semibold whitespace-nowrap border border-gray-200">{children}</th>
+              ),
+              td: ({ children }) => (
+                <td className="px-3 py-1.5 border border-gray-200 align-top">{children}</td>
+              ),
+              h2: ({ children }) => (
+                <h2 className="text-base font-bold text-green-800 mt-4 mb-2">{children}</h2>
+              ),
+              h3: ({ children }) => (
+                <h3 className="text-sm font-semibold text-gray-700 mt-3 mb-1">{children}</h3>
+              ),
+              hr: () => <hr className="my-3 border-gray-200" />,
+              blockquote: ({ children }) => (
+                <blockquote className="border-l-4 border-green-300 pl-3 text-gray-500 italic my-2">{children}</blockquote>
+              ),
+              code: ({ children }) => (
+                <code className="bg-gray-100 text-green-700 rounded px-1 py-0.5 font-mono text-xs">{children}</code>
+              ),
+              a: ({ href, children }) => (
+                <a href={href} target="_blank" rel="noopener noreferrer" className="text-green-700 underline hover:text-green-900">{children}</a>
+              ),
+            }}
+          >
+            {message.content}
+          </ReactMarkdown>
         </div>
         {/* Copy button — hiện khi hover */}
         <button
