@@ -6,7 +6,7 @@ from dotenv import load_dotenv
 from routers import chat
 from routers import booking as booking_router
 from services.chatbot import detect_provider
-from database import init_db, init_vinpearl_db, seed_vinpearl_data
+from database import init_db, init_vinpearl_db, seed_vinpearl_data, init_hotel_db, seed_hotel_data
 
 load_dotenv()
 
@@ -15,10 +15,12 @@ app = FastAPI(
     version="2.0.0",
 )
 
-# Initialise SQLite databases on startup
+# Initialise databases on startup
 init_db()
 init_vinpearl_db()
 seed_vinpearl_data()
+init_hotel_db()
+seed_hotel_data()
 
 origins = os.getenv("CORS_ORIGINS", "http://localhost:3000").split(",")
 

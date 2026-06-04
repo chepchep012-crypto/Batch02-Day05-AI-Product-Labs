@@ -175,7 +175,45 @@ def detect_provider() -> str:
 
 
 # ---------------------------------------------------------------------------
-# Provider implementations
+# ---------------------------------------------------------------------------
+# Token / cost helpers
+# ---------------------------------------------------------------------------
+
+# Price per 1 000 tokens in USD {model_prefix: (input, output)}
+_MODEL_PRICE_PER_1K: Dict[str, tuple] = {
+    # OpenAI
+    "gpt-4o":              (0.005,   0.015),
+    "gpt-4-turbo":         (0.01,    0.03),
+    "gpt-4":               (0.03,    0.06),
+    "gpt-3.5-turbo":       (0.0005,  0.0015),
+    # Gemini
+    "gemini-1.5-flash":    (0.000075, 0.0003),
+    "gemini-1.5-pro":      (0.00125,  0.005),
+    "gemini-2.0-flash":    (0.0001,   0.0004),
+    # Claude
+    "claude-3-haiku":      (0.00025,  0.00125),
+    "claude-3-sonnet":     (0.003,    0.015),
+    "claude-3-opus":       (0.015,    0.075),
+    "claude-3-5-sonnet":   (0.003,    0.015),
+}
+
+
+def _calc_cost(model: str, input_tokens: int, output_tokens: int) -> float:
+    """Return estimated USD cost. Falls back to gpt-3.5-turbo rates if model unknown."""
+    for prefix, (in_price, out_price) in _MODEL_PRICE_PER_1K.items():
+        if model.startswith(prefix):
+            return (input_tokens * in_price + output_tokens * out_price) / 1_000
+    # Generic fallback: $0.001 / 1K tokens
+    return (input_tokens + output_tokens) * 0.001 / 1_000
+
+
+def _estimate_tokens(text: str) -> int:
+    """Rough token estimate: ~4 chars per token (works for Vietnamese too)."""
+    return max(1, len(text) // 4)
+
+
+# ---------------------------------------------------------------------------
+# Provider implementations — each returns (reply: str, usage: dict)
 # ---------------------------------------------------------------------------
 
 async def _call_openai_compat(
@@ -184,8 +222,8 @@ async def _call_openai_compat(
     model: str,
     base_url: str | None = None,
     system_prompt: str = SYSTEM_PROMPT,
-) -> str:
-    """OpenAI / OpenRouter / Ollama — all share the same OpenAI-compatible API."""
+) -> tuple:
+    """OpenAI / OpenRouter / Ollama — returns (reply, usage_dict)."""
     from openai import AsyncOpenAI
 
     kwargs: dict = {"api_key": api_key}
@@ -200,7 +238,16 @@ async def _call_openai_compat(
         max_tokens=800,
         temperature=0.7,
     )
-    return response.choices[0].message.content.strip()
+    reply = response.choices[0].message.content.strip()
+    usage = getattr(response, "usage", None)
+    input_t  = usage.prompt_tokens     if usage else _estimate_tokens(" ".join(m["content"] for m in messages))
+    output_t = usage.completion_tokens if usage else _estimate_tokens(reply)
+    return reply, {
+        "input_tokens":  input_t,
+        "output_tokens": output_t,
+        "total_tokens":  input_t + output_t,
+        "cost_usd":      _calc_cost(model, input_t, output_t),
+    }
 
 
 async def _call_gemini(
@@ -208,13 +255,12 @@ async def _call_gemini(
     api_key: str,
     model: str,
     system_prompt: str = SYSTEM_PROMPT,
-) -> str:
-    """Google Gemini via google-generativeai SDK."""
+) -> tuple:
+    """Google Gemini — returns (reply, usage_dict)."""
     import google.generativeai as genai
 
     genai.configure(api_key=api_key)
 
-    # Convert history → Gemini format (all except last message)
     gemini_history = []
     for msg in history[:-1]:
         role = "user" if msg["role"] == "user" else "model"
@@ -228,7 +274,16 @@ async def _call_gemini(
     )
     chat = gemini_model.start_chat(history=gemini_history)
     response = await chat.send_message_async(last_message)
-    return response.text.strip()
+    reply = response.text.strip()
+    meta = getattr(response, "usage_metadata", None)
+    input_t  = getattr(meta, "prompt_token_count",     None) or _estimate_tokens(last_message)
+    output_t = getattr(meta, "candidates_token_count", None) or _estimate_tokens(reply)
+    return reply, {
+        "input_tokens":  input_t,
+        "output_tokens": output_t,
+        "total_tokens":  input_t + output_t,
+        "cost_usd":      _calc_cost(model, input_t, output_t),
+    }
 
 
 async def _call_claude(
@@ -236,8 +291,8 @@ async def _call_claude(
     api_key: str,
     model: str,
     system_prompt: str = SYSTEM_PROMPT,
-) -> str:
-    """Anthropic Claude via anthropic SDK."""
+) -> tuple:
+    """Anthropic Claude — returns (reply, usage_dict)."""
     from anthropic import AsyncAnthropic
 
     client = AsyncAnthropic(api_key=api_key)
@@ -248,7 +303,16 @@ async def _call_claude(
         messages=messages,
         max_tokens=800,
     )
-    return response.content[0].text.strip()
+    reply = response.content[0].text.strip()
+    usage = getattr(response, "usage", None)
+    input_t  = getattr(usage, "input_tokens",  None) or _estimate_tokens(" ".join(m["content"] for m in messages))
+    output_t = getattr(usage, "output_tokens", None) or _estimate_tokens(reply)
+    return reply, {
+        "input_tokens":  input_t,
+        "output_tokens": output_t,
+        "total_tokens":  input_t + output_t,
+        "cost_usd":      _calc_cost(model, input_t, output_t),
+    }
 
 
 # ---------------------------------------------------------------------------
@@ -1187,9 +1251,12 @@ VINPEARL_DEALS: List[Dict] = [
 ]
 
 _VP_MARKER_Q1 = "🤝 **Câu 1/3"
+_VP_MARKER_Q1_ONLY = "🤝 **Câu 1/3"   # alias kept for clarity
 _VP_MARKER_Q2 = "💰 **Câu 2/3"
 _VP_MARKER_Q2C = "💡 **Làm rõ ngân sách"
 _VP_MARKER_Q3 = "🏖️ **Câu 3/3"
+_VP_MARKER_Q3_FAST1 = "🏖️ **Câu 2/2"   # fast-track after Q1 (budget pre-known)
+_VP_MARKER_Q3_FAST2 = "🏖️ **Câu 1/1"   # fast-track from initial (who + budget pre-known)
 _VP_MARKER_RESULT = "📅 **Lịch trình Vinpearl"
 _MARKER_VP_ASK_CONTACT = "📞 **Đăng ký liên hệ CSKH**"
 _VP_MARKER_BOOKING_DONE = "✅ **Yêu cầu đặt lịch Vinpearl"
@@ -1298,9 +1365,15 @@ def _get_vp_state(history: List[Dict]) -> Optional[str]:
             c = msg["content"]
             if _MARKER_VP_ASK_CONTACT in c:
                 return "waiting_vp_contact"
+            if _VP_MARKER_BOOKING_DONE in c:
+                return "booking_done"
+            # Full result (may also contain customize prompt at end)
             if _VP_MARKER_RESULT in c:
                 return "result_shown"
-            if _VP_MARKER_Q3 in c:
+            # Standalone customize-only message (no full result above)
+            if _MARKER_VP_CUSTOMIZE in c:
+                return "waiting_customize"
+            if _VP_MARKER_Q3 in c or _VP_MARKER_Q3_FAST1 in c or _VP_MARKER_Q3_FAST2 in c:
                 return "waiting_q3"
             if _VP_MARKER_Q2C in c:
                 return "waiting_clarify"
@@ -1500,10 +1573,11 @@ def _estimate_vp_costs(
     adults, children = _vp_party_size(who)
     eaters = adults + children
 
+    # Values in k-VND (thousands). Convert to triệu = / 1_000.
     tiers = {
-        "thấp": {"meal_k": 200, "vw_k": 550, "extra_k": 300, "transport_k": 150},
-        "trung": {"meal_k": 400, "vw_k": 650, "extra_k": 350, "transport_k": 250},
-        "cao": {"meal_k": 700, "vw_k": 900, "extra_k": 500, "transport_k": 400},
+        "thấp": {"meal_k": 200, "vw_k": 550, "extra_k": 300, "transport_k": 200},
+        "trung": {"meal_k": 400, "vw_k": 650, "extra_k": 400, "transport_k": 300},
+        "cao": {"meal_k": 700, "vw_k": 900, "extra_k": 600, "transport_k": 450},
     }
     t = tiers.get(budget, tiers["trung"])
 
@@ -1512,11 +1586,15 @@ def _estimate_vp_costs(
     include_vw = style in ("vui chơi", "cả hai")
     include_extra = style in ("biển", "cả hai")
 
+    def k_to_m(k_val: float) -> float:
+        """Convert k-VND to triệu VND."""
+        return k_val * 1_000 / 1_000_000  # = k_val / 1_000
+
     vw_cost = 0.0
     if include_vw:
-        vw_cost = (t["vw_k"] * adults) / 1_000_000
+        vw_cost = k_to_m(t["vw_k"]) * adults
         if children:
-            vw_cost += (t["vw_k"] * 0.5 * children) / 1_000_000
+            vw_cost += k_to_m(t["vw_k"]) * 0.5 * children
 
     if dest_id == 2:
         extra_label = "🌊 Tour lặn san hô Hòn Mun"
@@ -1527,12 +1605,13 @@ def _estimate_vp_costs(
 
     extra_cost = 0.0
     if include_extra:
-        extra_cost = (t["extra_k"] * adults) / 1_000_000
+        extra_cost = k_to_m(t["extra_k"]) * adults
         if children and who == "family":
-            extra_cost += (t["extra_k"] * 0.5 * children) / 1_000_000
+            extra_cost += k_to_m(t["extra_k"]) * 0.5 * children
 
-    meal_cost = (t["meal_k"] * eaters * days) / 1_000_000
-    transport_cost = (t["transport_k"] * max(1, adults // 2 + 1) * (1 if dest_id == 2 else 2)) / 1_000_000
+    meal_cost = k_to_m(t["meal_k"]) * eaters * days
+    # transport: 1–2 trips/đảo/day, split by party
+    transport_cost = k_to_m(t["transport_k"]) * max(1, (adults + max(0, children)) // 2 + 1)
 
     deal_discount = 0.0
     deal_pct_label = ""
@@ -1569,35 +1648,79 @@ def _estimate_vp_costs(
     }
 
 
-def _extract_budget_vp(text: str) -> str:
+def _per_night_val_from_total(total_m: float, days: int) -> float:
+    """Convert total trip budget (triệu) to per-night budget."""
+    nights = max(1, days - 1) if days > 1 else 1
+    return total_m / nights
+
+
+def _val_to_budget_tier(val_m: float) -> str:
+    if val_m >= 6:
+        return "cao"
+    if val_m >= 3:
+        return "trung"
+    if val_m > 0:
+        return "thấp"
+    return "mơ hồ"
+
+
+def _extract_budget_vp(text: str, days: int = 2) -> str:
+    """
+    Extract budget tier from free text.
+    Handles:
+    - Keyword hints (cao/sang/luxury, thấp/tiết kiệm, trung)
+    - Per-night amount: "5 triệu/đêm", "5tr/đêm"
+    - Total trip amount: "20 triệu" (tổng) → chia cho số đêm
+    - Menu shortcuts: "1" / "2" / "3"
+    """
     t = text.lower()
+    nights = max(1, days - 1) if days > 1 else 1
+
     if any(k in t for k in ["tùy", "tuy ", "chưa biết", "chua biet", "không biết", "oke", "okay",
                               "được hết", "thoải mái", "thoai mai", "bất kỳ", "bat ky"]):
         return "mơ hồ"
+
     if any(k in t for k in ["cao", "sang", "luxury", "vip", "không giới hạn", "nhiều tiền",
-                              "trên 6", "tren 6", "7 triệu", "8 triệu", "10 triệu"]):
+                              "trên 6", "tren 6"]):
         return "cao"
-    if any(k in t for k in ["ít tiền", "it tien", "tiết kiệm", "tiet kiem", "budget", "rẻ",
-                              "thấp", "thap", "dưới 3", "duoi 3", "2 triệu", "2tr"]):
+    if any(k in t for k in ["ít tiền", "it tien", "tiết kiệm", "tiet kiem", "rẻ",
+                              "thấp", "thap", "dưới 3", "duoi 3"]):
         return "thấp"
-    m = re.search(r"(\d+)\s*(?:triệu|tr|million)", t)
-    if m:
-        val = int(m.group(1))
-        if val >= 6:
-            return "cao"
-        if val >= 3:
-            return "trung"
-        return "thấp"
+    if any(k in t for k in ["trung", "vừa", "vua ", "bình thường", "tầm trung", "tam trung",
+                              "tầm 4", "tam 4", "tầm 5", "tam 5", "3-6", "3 đến 6"]):
+        return "trung"
+
+    # Per-night explicit: "5tr/đêm" or "5 triệu mỗi đêm"
+    per_night_m = re.search(
+        r"(\d+(?:\.\d+)?)\s*(?:tr|triệu|million)\s*(?:/\s*(?:đêm|dem)|mỗi\s*(?:đêm|dem)|một\s*(?:đêm|dem))",
+        t,
+    )
+    if per_night_m:
+        return _val_to_budget_tier(float(per_night_m.group(1)))
+
+    # Total budget expressed in triệu — if "tổng" keyword or amount looks like total
+    total_kw = any(k in t for k in ["tổng", "tong", "cả chuyến", "ca chuyen", "toàn bộ", "toan bo",
+                                      "cho chuyến", "cho chuyen", "cho trip", "budget tổng"])
+    all_amounts = re.findall(r"(\d+(?:\.\d+)?)\s*(?:triệu|tr|million|m\b)", t)
+    if not all_amounts:
+        all_amounts = re.findall(r"(\d+)\s*(?:trieu|million)", t)
+
+    if all_amounts:
+        largest = max(float(v) for v in all_amounts)
+        # Heuristic: if amount > 8M and no explicit /đêm → treat as total trip budget
+        is_total = total_kw or (largest > 8 and "/đêm" not in t and "mỗi đêm" not in t and "mot dem" not in t)
+        if is_total and nights > 1:
+            per_night = _per_night_val_from_total(largest, days)
+            return _val_to_budget_tier(per_night)
+        return _val_to_budget_tier(largest)
+
     stripped = t.strip()
-    if stripped in ("1",):
+    if stripped == "1":
         return "thấp"
-    if stripped in ("2",):
+    if stripped == "2":
         return "trung"
-    if stripped in ("3",):
+    if stripped == "3":
         return "cao"
-    if any(k in t for k in ["trung", "vừa", "vua ", "bình thường", "tầm trung", "tam trung", "tầm 4", "tam 4",
-                              "tầm 5", "tam 5", "3-6", "3 đến 6"]):
-        return "trung"
     return "mơ hồ"
 
 
@@ -1619,6 +1742,18 @@ def _extract_vp_style(text: str) -> str:
 
 
 def _extract_who_from_history(history: List[Dict]) -> str:
+    # Fast-track Q3 (who embedded in bot message): "👤*(đi với: ...)*"
+    for msg in history:
+        if msg["role"] == "assistant":
+            c = msg.get("content", "")
+            if _VP_MARKER_Q3_FAST1 in c or _VP_MARKER_Q3_FAST2 in c:
+                m = re.search(r"👤\*\(đi với:\s*([^)]+)\)", c)
+                if m:
+                    label = m.group(1).strip()
+                    reverse = {"gia đình": "family", "nhóm bạn": "group",
+                               "cặp đôi": "couple", "một mình": "solo"}
+                    return reverse.get(label, "couple")
+    # Standard: answer after Q1 message
     found_q1 = False
     for msg in history:
         if not found_q1:
@@ -1627,20 +1762,62 @@ def _extract_who_from_history(history: List[Dict]) -> str:
         else:
             if msg["role"] == "user":
                 return _extract_who(_normalize(msg["content"]))
+    # Last resort: check first user message for explicit who keyword
+    for msg in history:
+        if msg["role"] == "user":
+            who = _extract_who(_normalize(msg["content"]))
+            _who_explicit_kws = [
+                "gia đình", "gia dinh", "nhóm", "nhom", "bạn bè",
+                "cặp đôi", "cap doi", "vợ chồng", "bạn trai", "bạn gái", "người yêu",
+                "một mình", "mot minh", "solo",
+            ]
+            if any(k in _normalize(msg["content"]) for k in _who_explicit_kws):
+                return who
+            break
     return "couple"
 
 
+_VP_BUDGET_EMBED_MARKER = "💰*(ngân sách:"
+
+
 def _extract_budget_from_history_vp(history: List[Dict]) -> str:
+    """
+    Extract budget tier from history.
+    Priority:
+    1. User answer after Q2/Clarify marker
+    2. Budget embedded in Q1 message (fast-track, already known from initial msg)
+    3. First user message that has explicit budget info (initial trigger msg)
+    """
+    days = _extract_trip_days(history)
+
+    # 1. Standard Q2 answer
     last_q2_idx = None
     for i, msg in enumerate(history):
         if msg["role"] == "assistant" and (_VP_MARKER_Q2 in msg["content"] or _VP_MARKER_Q2C in msg["content"]):
             last_q2_idx = i
-    if last_q2_idx is None:
-        return "trung"
-    for i in range(last_q2_idx + 1, len(history)):
-        if history[i]["role"] == "user":
-            b = _extract_budget_vp(_normalize(history[i]["content"]))
-            return b if b != "mơ hồ" else "trung"
+    if last_q2_idx is not None:
+        for i in range(last_q2_idx + 1, len(history)):
+            if history[i]["role"] == "user":
+                b = _extract_budget_vp(_normalize(history[i]["content"]), days)
+                return b if b != "mơ hồ" else "trung"
+
+    # 2. Budget embedded in Q1 marker (fast-track path)
+    for msg in history:
+        if msg["role"] == "assistant" and _VP_MARKER_Q1 in msg["content"]:
+            m = re.search(r"💰\*\(ngân sách:\s*([^)]+)\)", msg["content"])
+            if m:
+                embedded = m.group(1).strip()
+                if embedded in ("thấp", "trung", "cao"):
+                    return embedded
+
+    # 3. Scan earliest user message for budget info (the initial trigger message)
+    for msg in history:
+        if msg["role"] == "user":
+            b = _extract_budget_vp(_normalize(msg["content"]), days)
+            if b != "mơ hồ":
+                return b
+            break  # only check first user message here
+
     return "trung"
 
 
@@ -1905,11 +2082,266 @@ _VP_ACTIVITIES_BY_DEST: Dict[int, Dict[str, list]] = {
     # 3: _VP_ACTIVITIES_NHA  # Nam Hội An (future)
 }
 
-_VP_EXTRA_DAY = (
-    "Tự do khám phá Phú Quốc theo sở thích",
-    "Lặn ngắm san hô, câu cá ngoài khơi, hoặc thêm ngày biển",
-    "Ăn tối hải sản, nghỉ ngơi resort",
-)
+_VP_EXTRA_DAY_BY_DEST: Dict[int, tuple] = {
+    1: (  # Phú Quốc
+        "Tự do khám phá — tắm biển, spa, hoặc thêm ngày thư giãn",
+        "Lặn ngắm san hô, câu cá ngoài khơi, hoặc dạo đảo",
+        "Ăn tối hải sản, nghỉ ngơi resort",
+    ),
+    2: (  # Nha Trang
+        "Tự do — tắm biển Đảo Hòn Tre, spa, hoặc tour đảo thêm",
+        "Kayak / paddleboard ven đảo, hoặc thêm buổi lặn biển",
+        "Ăn tối hải sản Nha Trang, nghỉ ngơi resort",
+    ),
+    3: (  # Nam Hội An
+        "Tự do — tắm biển An Bàng, hoặc đạp xe khám phá vùng quê",
+        "Thăm phố cổ Hội An *(cách 35 phút)* — đèn lồng, bánh mì Phượng",
+        "Mua sắm đặc sản lụa Hội An, về resort nghỉ ngơi",
+    ),
+}
+_VP_EXTRA_DAY = _VP_EXTRA_DAY_BY_DEST[1]  # fallback Phú Quốc
+
+
+_MARKER_VP_CUSTOMIZE = "🔧 **Tùy chỉnh lịch trình"
+
+
+def _try_switch_room(msg_norm: str, all_rooms: List[Dict], who: str, budget: str, nights: int) -> Optional[Dict]:
+    """
+    Try to find a room switch request.
+    Handles: "đổi sang phòng 3", "chọn phòng Family Deluxe", "phòng 2", number alone.
+    Returns normalised room dict or None.
+    """
+    rooms_sorted = sorted(all_rooms, key=lambda r: r.get("price_per_night", 0))
+
+    # Number-based: "phòng 2", "phong 2", then "đổi sang 2", "chon 3" etc.
+    m = (
+        re.search(r"(?:phòng|phong)\s+(\d+)", msg_norm, re.IGNORECASE)
+        or re.search(r"(?:đổi|doi|chọn|chon|switch|chuyen|chuyển)\s+(?:sang\s+)?(?:phòng|phong\s+)?(\d+)\b", msg_norm, re.IGNORECASE)
+        or re.search(r"\broom\s+(\d+)\b", msg_norm, re.IGNORECASE)
+    )
+    if m:
+        idx = int(m.group(1)) - 1
+        if 0 <= idx < len(rooms_sorted):
+            return _normalize_db_room(rooms_sorted[idx])
+
+    # Name-based: find partial match in room names (strip accents for comparison)
+    import unicodedata
+
+    def _strip(s: str) -> str:
+        s = unicodedata.normalize("NFD", s.lower())
+        return "".join(c for c in s if unicodedata.category(c) != "Mn")
+
+    msg_strip = _strip(msg_norm)
+    for r in all_rooms:
+        nm_strip = _strip(r.get("name", ""))
+        words = [w for w in nm_strip.split() if len(w) > 3]
+        if words and sum(1 for w in words if w in msg_strip) >= min(2, len(words)):
+            return _normalize_db_room(r)
+
+    return None
+
+
+def _try_extract_day_change(msg_norm: str, current_days: int) -> Optional[int]:
+    """Return new day count from messages like 'thêm 1 ngày'/'them 1 ngay', 'rút còn 3 ngày', '7 ngày'."""
+    # "thêm N ngày" / "them N ngay"
+    m = re.search(r"(?:thêm|them)\s+(\d+)\s*(?:ngày|ngay)", msg_norm, re.IGNORECASE)
+    if m:
+        return min(14, current_days + int(m.group(1)))
+    # "bớt N ngày", "rút N ngày", "bot/rut/giam"
+    m = re.search(r"(?:bớt|bot|rút|rut|giảm|giam)\s+(\d+)\s*(?:ngày|ngay)", msg_norm, re.IGNORECASE)
+    if m:
+        return max(1, current_days - int(m.group(1)))
+    # "N ngày"/"N ngay" with optional prefix
+    m = re.search(r"(?:còn|con|sang|đổi|doi|thành|thanh)?\s*(\d+)\s*(?:ngày|ngay)", msg_norm, re.IGNORECASE)
+    if m:
+        val = int(m.group(1))
+        if 1 <= val <= 14 and val != current_days:
+            return val
+    return None
+
+
+def _handle_activity_change_request(
+    msg_norm: str, history: List[Dict],
+    who: str, budget: str, days: int,
+    dest_id: int, dest_name: str, all_rooms: List[Dict],
+) -> str:
+    """
+    Detect which day + slot the user wants to change and regenerate timeline with override.
+    Supports: "ngày N buổi sáng/chiều/tối đổi sang X"
+    """
+    day_m = re.search(r"(?:ngày|ngay)\s+(\d+)", msg_norm)
+    slot_m = re.search(r"(sáng|sang|chiều|chieu|buổi sáng|buổi chiều|buoi sang|buoi chieu|tối|toi|buổi tối|buoi toi)", msg_norm)
+    change_m = re.search(r"(?:đổi.*sang|doi.*sang|thay.*bằng|thay.*bang|thêm|them|thay)\s+(.+)", msg_norm)
+
+    if not (day_m and change_m):
+        return (
+            f"{_MARKER_VP_CUSTOMIZE} — đổi hoạt động?**\n\n"
+            "Tôi chưa hiểu rõ bạn muốn thay gì. Vui lòng mô tả theo dạng:\n\n"
+            "**Ngày [số] buổi [sáng/chiều/tối] đổi sang [hoạt động mới]**\n\n"
+            "Ví dụ: *'ngày 2 buổi chiều đổi sang tham quan Tháp Bà Ponagar'*"
+        )
+
+    day_num = int(day_m.group(1))
+    slot_name = "chiều"
+    if slot_m:
+        raw = slot_m.group(1)
+        if any(k in raw for k in ["sáng", "sang"]):
+            slot_name = "sáng"
+        elif any(k in raw for k in ["tối", "toi"]):
+            slot_name = "tối"
+
+    new_activity = change_m.group(1).strip()
+
+    # Rebuild timeline with override
+    who_label = _who_label(who)
+    dest_activities = _VP_ACTIVITIES_BY_DEST.get(dest_id, _VP_ACTIVITIES)
+    cur_style = "cả hai"
+    for m_h in reversed(history):
+        if m_h["role"] == "assistant" and _VP_MARKER_RESULT in m_h["content"]:
+            c = m_h["content"]
+            if "biển & nghỉ dưỡng" in c.lower():
+                cur_style = "biển"
+            elif "vui chơi" in c[:500].lower():
+                cur_style = "vui chơi"
+            break
+
+    activity_pool = dest_activities.get(cur_style, dest_activities.get("biển", _VP_ACTIVITIES["biển"]))
+    extra_day_template = _VP_EXTRA_DAY_BY_DEST.get(dest_id, _VP_EXTRA_DAY)
+    nights = max(1, days - 1)
+
+    # Find the recommended room from history
+    rec_room = None
+    for m_h in reversed(history):
+        if m_h["role"] == "assistant" and _VP_MARKER_RESULT in m_h["content"]:
+            bm = re.search(r"Phòng gợi ý:\*\*\s*(.+?)\s*—", m_h["content"])
+            if bm and all_rooms:
+                nm_search = bm.group(1).strip()
+                for r in all_rooms:
+                    if nm_search in r.get("name", ""):
+                        rec_room = _normalize_db_room(r)
+                        break
+            break
+    if not rec_room:
+        rec_room = _find_vp_room(who, budget, cur_style, dest_id)
+
+    day_blocks = []
+    for i in range(days):
+        if i < len(activity_pool):
+            mor, aft, eve = activity_pool[i]
+        else:
+            mor, aft, eve = extra_day_template
+        if i == 0:
+            resort_name = rec_room.get("resort", "resort")
+            mor = mor.replace("{resort}", resort_name)
+        if i == days - 1 and "sân bay" not in eve and "cảng" not in eve:
+            eve = "Ra **sân bay / cảng** *(kiểm tra giờ tàu/bay về)*"
+        # Apply override
+        if i + 1 == day_num:
+            if slot_name == "sáng":
+                mor = f"**{new_activity}** *(thay đổi theo yêu cầu)*"
+            elif slot_name == "tối":
+                eve = f"**{new_activity}** *(thay đổi theo yêu cầu)*"
+            else:
+                aft = f"**{new_activity}** *(thay đổi theo yêu cầu)*"
+        day_blocks.append(
+            f"**📌 Ngày {i + 1}**\n"
+            f"- 🌅 Sáng: {mor}\n"
+            f"- ☀️ Chiều: {aft}\n"
+            f"- 🌙 Tối: {eve}"
+        )
+
+    label = f"{days}N{nights}Đ" if days > 1 else "1 ngày"
+    timeline_str = "\n\n".join(day_blocks)
+    customize_prompt = _build_customize_prompt()
+
+    return (
+        f"📅 **Lịch trình Vinpearl {dest_name} {label}** — {who_label}\n"
+        f"*(Đã cập nhật: ngày {day_num} buổi {slot_name} → {new_activity})*\n\n"
+        f"{timeline_str}\n\n"
+        f"---\n"
+        f"{customize_prompt}"
+    )
+
+
+def _build_rooms_comparison(
+    all_rooms: Optional[List[Dict]],
+    nights: int,
+    budget: str,
+    dest_name: str,
+    recommended: Dict,
+    who: str,
+) -> str:
+    """
+    Build a compact markdown table comparing ≥5 rooms.
+    Marks: ⭐ gợi ý | ✅ trong ngân sách | 💰 rẻ hơn | 💎 cao hơn
+    """
+    if not all_rooms:
+        return ""
+
+    rooms = sorted(all_rooms, key=lambda r: r.get("price_per_night", 0))
+    display = rooms[:8]
+
+    budget_note = _budget_label_vp(budget)
+    rec_name = recommended.get("type", "") or recommended.get("name", "")
+
+    tier_icon = {"mid": "💚", "luxury": "💎", "ultra": "👑"}
+
+    header = (
+        f"\n\n---\n### 🏨 So sánh {len(display)} loại phòng — Vinpearl {dest_name}\n\n"
+        f"*(✅ trong ngân sách **{budget_note}** · ⭐ phòng được gợi ý)*\n\n"
+        "| # | Phòng | Resort | Giá/đêm | Tổng | Phù hợp | Điểm nổi bật | |\n"
+        "|:---:|---|---|---:|---:|---|---|:---:|\n"
+    )
+
+    rows = []
+    for idx, r in enumerate(display, start=1):
+        p     = float(r.get("price_per_night", 0))
+        p_m   = p / 1_000_000
+        p_tot = p_m * nights
+        nm    = r.get("name", "")
+        rn    = r.get("resort_name", "")
+        suf   = r.get("suitable_for", "").replace("Gia đình có trẻ nhỏ", "👨‍👩‍👧 Gia đình").replace("Cặp đôi", "👫").replace("Solo", "🧍").replace("Nhóm bạn", "👥")
+        hl    = r.get("highlights", "")
+        lvl   = r.get("budget_level", "mid")
+        bf    = "🍳" if r.get("breakfast_included") else ""
+        src   = r.get("source_url", "https://vinpearl.com")
+
+        is_rec    = nm == rec_name or nm in rec_name or rec_name in nm
+        in_budget = _room_fits_budget(p, budget)
+
+        if is_rec:
+            badge = "⭐"
+        elif in_budget:
+            badge = "✅"
+        elif p_m < {"thấp": 3.0, "trung": 3.0, "cao": 6.0}.get(budget, 3.0):
+            badge = "💰"
+        else:
+            badge = "💎"
+
+        tier = tier_icon.get(lvl, "")
+        rows.append(
+            f"| {idx} | **{nm}** {bf} | {rn} | {tier} {p_m:.1f} tr | {p_tot:.1f} tr | {suf} | {hl} | {badge} [🔗]({src}) |"
+        )
+
+    footer = (
+        "\n\n> 💡 **Thay đổi phòng:** Gõ `đổi sang phòng 2` hoặc tên phòng bất kỳ."
+    )
+    return header + "\n".join(rows) + footer
+
+
+def _build_customize_prompt() -> str:
+    return (
+        f"{_MARKER_VP_CUSTOMIZE}?**\n\n"
+        "| # | Tuỳ chỉnh | Ví dụ |\n"
+        "|:---:|---|---|\n"
+        "| 1 | 🏨 Đổi loại phòng | `đổi sang phòng 2` hoặc tên phòng |\n"
+        "| 2 | 📅 Thay đổi số ngày | `thêm 1 ngày` · `rút còn 3 ngày` |\n"
+        "| 3 | 🌊 Thiên về biển & nghỉ dưỡng | `biển hơn` |\n"
+        "| 4 | 🎢 Thiên về vui chơi | `vui chơi hơn` |\n"
+        "| 5 | 🗺️ Đổi hoạt động cụ thể | `ngày 2 chiều đổi sang spa` |\n"
+        "| 6 | ✅ Giữ nguyên & đặt lịch | `đặt lịch` |\n\n"
+        "*(Hoặc mô tả tự do bất kỳ thay đổi nào bạn muốn)*"
+    )
 
 
 def _build_vp_timeline(who: str, style: str, room: Dict, deal: Optional[Dict], days: int = 2, dest_name: str = "Phú Quốc", dest_id: int = 1, all_rooms: Optional[List[Dict]] = None, budget: str = "trung") -> str:
@@ -1920,29 +2352,31 @@ def _build_vp_timeline(who: str, style: str, room: Dict, deal: Optional[Dict], d
     activity_pool = dest_activities.get(style, dest_activities.get("biển", _VP_ACTIVITIES["biển"]))
     resort_name = room.get("resort", "resort")
 
-    day_blocks = []
+    extra_day_template = _VP_EXTRA_DAY_BY_DEST.get(dest_id, _VP_EXTRA_DAY)
+
+    # ── Timeline table ─────────────────────────────────────────────────────────
+    timeline_rows = []
     for i in range(days):
         if i < len(activity_pool):
             mor, aft, eve = activity_pool[i]
         else:
-            mor, aft, eve = _VP_EXTRA_DAY
+            mor, aft, eve = extra_day_template
 
-        # Day 1 morning: inject resort name
         if i == 0:
             mor = mor.replace("{resort}", resort_name)
 
-        # Last day: ensure departure note if not already there
         if i == days - 1 and "sân bay" not in eve and "cảng" not in eve:
             eve = "Ra **sân bay / cảng** *(kiểm tra giờ tàu/bay về)*"
 
-        day_blocks.append(
-            f"**📌 Ngày {i + 1}**\n"
-            f"- 🌅 Sáng: {mor}\n"
-            f"- ☀️ Chiều: {aft}\n"
-            f"- 🌙 Tối: {eve}"
+        timeline_rows.append(
+            f"| **Ngày {i + 1}** | 🌅 {mor} | ☀️ {aft} | 🌙 {eve} |"
         )
 
-    timeline_str = "\n\n".join(day_blocks)
+    timeline_str = (
+        "| Ngày | 🌅 Sáng | ☀️ Chiều | 🌙 Tối |\n"
+        "|:---:|---|---|---|\n"
+        + "\n".join(timeline_rows)
+    )
     nights = days - 1 if days > 1 else 1
     label = f"{days}N{nights}Đ" if days > 1 else "1 ngày"
 
@@ -1990,103 +2424,103 @@ def _build_vp_timeline(who: str, style: str, room: Dict, deal: Optional[Dict], d
     if costs["children"]:
         party_desc += f" + {costs['children']} trẻ em"
 
+    # Budget overflow warning — when user stated a total budget
+    budget_warning = ""
+    if all_rooms and total_lo > 0:
+        # Try to find if user stated a total budget in history (via our budget marker)
+        # We can infer: if total exceeds the expected tier range, warn
+        tier_max = {"thấp": 10.0, "trung": 25.0, "cao": 80.0}
+        if total_lo > tier_max.get(budget, 25.0):
+            alt_room_hint = ""
+            if all_rooms:
+                cheaper = [r for r in all_rooms if _room_fits_budget(float(r.get("price_per_night", 0)), budget)
+                           and r.get("price_per_night", 0) < (room.get("_price_per_night") or float("inf"))]
+                if cheaper:
+                    c = cheaper[0]
+                    budget_warning = (
+                        f"\n\n⚠️ *Tổng chi phí ước tính ({total_lo:.1f} tr) có thể vượt kỳ vọng. "
+                        f"Bạn cũng có thể chọn phòng rẻ hơn như **{c['name']}** "
+                        f"({c['price_per_night']/1_000_000:.1f} tr/đêm) để tiết kiệm thêm.*"
+                    )
+
     cost_table = (
         "| Hạng mục | Chi phí |\n"
         "|---|---|\n"
         + "\n".join(cost_rows)
         + f"\n\n*Ước tính cho {party_desc}. Các mục phụ thuộc theo phong cách chuyến đi và ngân sách bạn chọn.*"
+        + budget_warning
     )
 
     budget_note = _budget_label_vp(budget)
     nightly = price_val * 1_000_000
+    in_budget_tag = " ✅" if _room_fits_budget(nightly, budget) else ""
 
-    # ── Room block ─────────────────────────────────────────────────────────────
-    room_block = (
-        f"🏨 **Phòng gợi ý:** {room['type']} — {room['resort']}\n"
-        f"   💰 {room['price_range']} (× {nights} đêm = **{room_cost:.1f} tr**) · 📍 {room['area']}\n"
-        f"   ✅ *Lý do chọn:* {room['highlights']}\n"
-        f"   📊 *Ngân sách bạn chọn:* {budget_note}"
-        + (" — giá phòng nằm trong tầm này" if _room_fits_budget(nightly, budget) else "")
-        + f"\n   🔗 [Xem nguồn]({room['source_url']})"
-    )
-
-    # ── All rooms block (shown when all_rooms provided) ────────────────────────
-    all_rooms_block = ""
-    if all_rooms and len(all_rooms) > 1:
-        sorted_rooms = sorted(
-            all_rooms,
-            key=lambda r: (0 if _room_fits_budget(r.get("price_per_night", 0), budget) else 1, r.get("price_per_night", 0)),
-        )
-        lines = [
-            f"\n\n---\n### 🏨 Các loại phòng tại Vinpearl {dest_name}\n"
-            f"*(✅ = phù hợp ngân sách **{budget_note}**)*\n"
-        ]
-        for r in sorted_rooms[:6]:
-            p = r.get("price_per_night", 0)
-            p_str = f"{p / 1_000_000:.1f} tr/đêm"
-            p_total = p / 1_000_000 * nights
-            suf = r.get("suitable_for", "")
-            hl = r.get("highlights", "")
-            rn = r.get("resort_name", "")
-            nm = r.get("name", "")
-            src = r.get("source_url", "https://vinpearl.com")
-            fit = "✅ " if _room_fits_budget(p, budget) else ""
-            lines.append(
-                f"{fit}**{nm}** — {rn}\n"
-                f"   💰 {p_str} · × {nights} đêm = **{p_total:.1f} tr** · 👥 {suf}\n"
-                f"   ✨ {hl}\n"
-                f"   🔗 [Xem phòng]({src})\n"
-            )
-        all_rooms_block = "\n".join(lines)
-
-    # ── Deal block ─────────────────────────────────────────────────────────────
+    # ── Room info table ────────────────────────────────────────────────────────
+    deal_row = ""
     if deal:
-        note_line = f"\n   📌 {deal['note']}" if deal.get("note") else ""
-        deal_block = (
-            f"🎁 **Ưu đãi áp dụng được:** {deal['title']}\n"
-            f"   Giảm: **{deal['discount']}** · Điều kiện: {deal['condition']}"
-            f"{note_line}\n"
-            f"   🔗 [Xem nguồn]({deal['source_url']})"
+        deal_row = (
+            f"| 🎁 Ưu đãi | **{deal['title']}** — giảm {deal['discount']} · {deal['condition']} · [Xem]({deal['source_url']}) |\n"
         )
     else:
-        deal_block = (
-            "ℹ️ **Ưu đãi:** Chưa có ưu đãi phù hợp — kiểm tra trực tiếp tại "
-            "[vinpearl.com/vi/khuyen-mai](https://vinpearl.com/vi/khuyen-mai)"
-        )
+        deal_row = "| 🎁 Ưu đãi | Chưa có ưu đãi — [Xem tại đây](https://vinpearl.com/vi/khuyen-mai) |\n"
+
+    room_table = (
+        "| Thông tin | Chi tiết |\n"
+        "|---|---|\n"
+        f"| 🏨 Phòng gợi ý{in_budget_tag} | **{room['type']}** — {room['resort']} |\n"
+        f"| 💰 Giá | {room['price_range']} × {nights} đêm = **{room_cost:.1f} tr** |\n"
+        f"| 📍 Vị trí | {room['area']} |\n"
+        f"| ✨ Điểm nổi bật | {room['highlights']} |\n"
+        f"| 📊 Ngân sách | {budget_note}{in_budget_tag} |\n"
+        f"| 🔗 Chi tiết | [Xem phòng]({room['source_url']}) |\n"
+        + deal_row
+    )
+
+    # ── All rooms comparison block ──────────────────────────────────────────────
+    all_rooms_block = _build_rooms_comparison(all_rooms, nights, budget, dest_name, room, who)
+
+    customize_prompt = _build_customize_prompt()
 
     return (
-        f"📅 **Lịch trình Vinpearl {dest_name} {label}** — {who_label}\n\n"
+        f"## 📅 Lịch trình Vinpearl {dest_name} {label} — {who_label}\n\n"
         f"{timeline_str}\n\n"
         f"---\n"
-        f"{room_block}\n\n"
-        f"{deal_block}\n\n"
+        f"### 🏨 Phòng & Ưu đãi\n\n"
+        f"{room_table}\n"
         f"---\n"
         f"### 💵 Chi phí ước tính\n\n"
         f"{cost_table}"
         f"{all_rooms_block}\n\n"
         f"---\n"
-        f"💬 *Muốn thay đổi? Gõ **'thích biển hơn'**, **'thích vui chơi hơn'**, hoặc **'làm lại từ đầu'**.*\n\n"
-        f"📞 *Muốn đặt lịch? Gõ **'đặt lịch'** — nhân viên CSKH sẽ liên hệ lại qua SĐT/email bạn cung cấp.*"
+        f"{customize_prompt}"
     )
 
 
 def _get_all_dest_rooms(dest_id: int) -> List[Dict]:
-    """Return all active rooms for a destination from DB (for the 'all rooms' block)."""
+    """Return all active rooms for a destination (SQLite + PostgreSQL)."""
     try:
-        from database import _sqlite_conn
-        conn = _sqlite_conn()
-        rows = [dict(r) for r in conn.execute(
-            """SELECT rm.id, rm.resort_id, rm.name, rm.view_type, rm.suitable_for,
-                      rm.budget_level, rm.price_per_night, rm.breakfast_included,
-                      rm.source_url, rm.highlights,
-                      rs.name AS resort_name, rs.address
-               FROM vp_room rm
-               JOIN vp_resort rs ON rm.resort_id = rs.id
-               WHERE rs.destination_id = ? AND rm.is_active = 1 AND rs.is_active = 1
-               ORDER BY rm.price_per_night ASC""",
-            (dest_id,),
-        ).fetchall()]
-        conn.close()
+        from database import _USE_PG, _sqlite_conn, _pg_conn
+        sql_sqlite = """
+            SELECT rm.id, rm.resort_id, rm.name, rm.view_type, rm.suitable_for,
+                   rm.budget_level, rm.price_per_night, rm.breakfast_included,
+                   rm.source_url, rm.highlights,
+                   rs.name AS resort_name, rs.address
+            FROM vp_room rm
+            JOIN vp_resort rs ON rm.resort_id = rs.id
+            WHERE rs.destination_id = ? AND rm.is_active = 1 AND rs.is_active = 1
+            ORDER BY rm.price_per_night ASC"""
+        sql_pg = sql_sqlite.replace("= ?", "= %s")
+        if _USE_PG:
+            import psycopg2.extras
+            conn = _pg_conn()
+            cur = conn.cursor(cursor_factory=psycopg2.extras.RealDictCursor)
+            cur.execute(sql_pg, (dest_id,))
+            rows = [dict(r) for r in cur.fetchall()]
+            cur.close(); conn.close()
+        else:
+            conn = _sqlite_conn()
+            rows = [dict(r) for r in conn.execute(sql_sqlite, (dest_id,)).fetchall()]
+            conn.close()
         return rows
     except Exception as e:
         print(f"[DB] _get_all_dest_rooms error: {e}")
@@ -2163,27 +2597,98 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
             "*(Gõ số hoặc mô tả)*"
         )
 
-    # Correction after result: style change or đặt lịch
-    if state == "result_shown":
+    # ── Customize state — xử lý mọi yêu cầu tùy chỉnh ──────────────────────────
+    if state in ("result_shown", "waiting_customize"):
         if _is_vp_booking_intent(msg_norm, history):
             return _format_vp_contact_form(_extract_vp_booking_context(history))
+
         days = _extract_trip_days(history)
         dest_id, dest_name = _extract_dest_from_history(history)
-        if any(k in msg_norm for k in ["thích biển", "thich bien", "đổi biển", "chuyển biển", "biển hơn"]):
-            who = _extract_who_from_history(history)
-            budget = _extract_budget_from_history_vp(history)
+        who = _extract_who_from_history(history)
+        budget = _extract_budget_from_history_vp(history)
+        all_rooms = _get_all_dest_rooms(dest_id)
+
+        # Quick shortcut: menu items 3/4
+        if msg_norm.strip() == "3" or any(k in msg_norm for k in ["thích biển", "biển hơn", "nghỉ dưỡng hơn"]):
             room = _find_vp_room(who, budget, "biển", dest_id)
             deal = _find_vp_deal(room, dest_id)
-            all_rooms = _get_all_dest_rooms(dest_id)
             return _build_vp_timeline(who, "biển", room, deal, days, dest_name, dest_id, all_rooms, budget)
-        if any(k in msg_norm for k in ["thích vui chơi", "thich vui choi", "đổi vui chơi", "vui chơi hơn",
-                                        "vinwonders hơn", "safari"]):
-            who = _extract_who_from_history(history)
-            budget = _extract_budget_from_history_vp(history)
+
+        if msg_norm.strip() == "4" or any(k in msg_norm for k in ["vui chơi hơn", "vinwonders hơn", "thêm vinwonders"]):
             room = _find_vp_room(who, budget, "vui chơi", dest_id)
             deal = _find_vp_deal(room, dest_id)
-            all_rooms = _get_all_dest_rooms(dest_id)
             return _build_vp_timeline(who, "vui chơi", room, deal, days, dest_name, dest_id, all_rooms, budget)
+
+        # Option 6 / "giữ nguyên" / "ok" → đặt lịch
+        if msg_norm.strip() == "6" or any(k in msg_norm for k in ["giữ nguyên", "giu nguyen", "không đổi",
+                                                                    "ok", "được rồi", "duoc roi", "ổn rồi"]):
+            return _format_vp_contact_form(_extract_vp_booking_context(history))
+
+        # Option 1 / room-switch by index or name
+        room_switched = _try_switch_room(msg_norm, all_rooms, who, budget, nights=days - 1 if days > 1 else 1)
+        if room_switched:
+            # Try to get the current style from history
+            cur_style = "cả hai"
+            for m in reversed(history):
+                if m["role"] == "assistant" and _VP_MARKER_RESULT in m["content"]:
+                    c = m["content"]
+                    if "biển & nghỉ dưỡng" in c.lower() or ("biển" in c[:500] and "vinwonders" not in c[:500].lower()):
+                        cur_style = "biển"
+                    elif "vui chơi" in c[:500].lower():
+                        cur_style = "vui chơi"
+                    break
+            deal = _find_vp_deal(room_switched, dest_id)
+            return _build_vp_timeline(who, cur_style, room_switched, deal, days, dest_name, dest_id, all_rooms, budget)
+
+        # Option 2 / day-change
+        new_days = _try_extract_day_change(msg_norm, days)
+        if new_days and new_days != days:
+            cur_style = "cả hai"
+            cur_room_data = None
+            for m in reversed(history):
+                if m["role"] == "assistant" and _VP_MARKER_RESULT in m["content"]:
+                    c = m["content"]
+                    if "biển & nghỉ dưỡng" in c.lower():
+                        cur_style = "biển"
+                    elif "vui chơi" in c[:500].lower():
+                        cur_style = "vui chơi"
+                    break
+            room = _find_vp_room(who, budget, cur_style, dest_id)
+            deal = _find_vp_deal(room, dest_id)
+            return _build_vp_timeline(who, cur_style, room, deal, new_days, dest_name, dest_id, all_rooms, budget)
+
+        # Option 5 / activity change request — detect by day/slot keywords
+        if any(k in msg_norm for k in ["đổi hoạt động", "thay hoạt động", "ngày ", "buổi ",
+                                        "doi hoat dong", "thay hoat dong",
+                                        "ngay ", "buoi ", "doi ngay", "them hoat"]):
+            return _handle_activity_change_request(msg_norm, history, who, budget, days, dest_id, dest_name, all_rooms)
+
+        # Option 1 prompt / menu shown / user typed "1" or "2"
+        if msg_norm.strip() == "1":
+            return (
+                f"{_MARKER_VP_CUSTOMIZE} — đổi phòng?**\n\n"
+                f"Gõ **số thứ tự** hoặc **tên phòng** từ bảng so sánh phía trên.\n"
+                f"*(Ví dụ: 'đổi sang phòng 3' hoặc 'Family Deluxe')*"
+            )
+        if msg_norm.strip() == "2":
+            return (
+                f"{_MARKER_VP_CUSTOMIZE} — số ngày?**\n\n"
+                f"Hiện tại: **{days} ngày**. Bạn muốn thay đổi thế nào?\n"
+                "*(Gõ ví dụ: 'thêm 1 ngày', 'rút còn 3 ngày', hoặc số ngày cụ thể như '7 ngày')*"
+            )
+        if msg_norm.strip() == "5":
+            return (
+                f"{_MARKER_VP_CUSTOMIZE} — đổi hoạt động?**\n\n"
+                "Cho tôi biết bạn muốn thay gì, ví dụ:\n"
+                "- *'ngày 2 buổi chiều đổi sang thăm Tháp Bà Ponagar'*\n"
+                "- *'thêm hoạt động kayak ngày 3'*\n"
+                "- *'bỏ tour lặn, thay bằng spa'*\n\n"
+                "*(Mô tả tự do — tôi sẽ cập nhật lịch trình)*"
+            )
+
+        # For result_shown: forward to customize prompt; for waiting_customize: stay silent → AI
+        if state == "result_shown":
+            return _build_customize_prompt()
         return None
 
     # Initial trigger
@@ -2192,11 +2697,63 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
             dest_id, dest_name = _detect_vp_dest(msg_norm)
             days = _extract_days(user_message) or 2
             days = max(1, min(days, 14))
+
+            # Try to detect info already provided in this first message
+            pre_who = _extract_who(msg_norm)
+            # _extract_who returns "couple" as default even when not mentioned
+            # Only trust it if there's an explicit who keyword
+            _who_explicit_kws = [
+                "gia đình", "gia dinh", "con ", "trẻ em", "ba mẹ", "bố mẹ",
+                "nhóm", "nhom", "bạn bè", "ban be", "hội",
+                "cặp đôi", "cap doi", "vợ chồng", "bạn trai", "bạn gái", "người yêu",
+                "một mình", "mot minh", "solo",
+                " 1 người", " 2 người", " 3 người", " 4 người",
+            ]
+            who_known = any(k in msg_norm for k in _who_explicit_kws)
+            pre_who = pre_who if who_known else None
+
+            pre_budget = _extract_budget_vp(msg_norm, days)
+            budget_known = pre_budget != "mơ hồ"
+
+            pre_style_raw = _extract_vp_style(msg_norm)
+            _style_explicit_kws = [
+                "biển", "bien", "beach", "tắm", "bơi", "nghỉ dưỡng", "nghi duong",
+                "vui chơi", "vui choi", "vinwonders", "safari", "giải trí",
+                "cả hai", "ca hai",
+            ]
+            style_known = any(k in msg_norm for k in _style_explicit_kws)
+            pre_style = pre_style_raw if style_known else None
+
             trip_note = f"\n*(Chuyến đi: **{days} ngày** tại **{dest_name}** — Vinpearl)*"
             if days == 2 and dest_name == "Phú Quốc":
-                trip_note = ""   # default — no note needed
+                trip_note = ""
+
+            # --- Fast-track: all 3 known → generate result directly ---
+            if who_known and budget_known and style_known:
+                room = _find_vp_room(pre_who, pre_budget, pre_style, dest_id)
+                deal = _find_vp_deal(room, dest_id)
+                all_rooms = _get_all_dest_rooms(dest_id)
+                return _build_vp_timeline(pre_who, pre_style, room, deal, days, dest_name, dest_id, all_rooms, pre_budget)
+
+            # --- Fast-track: who + budget known → skip to Q3 directly ---
+            if who_known and budget_known:
+                budget_embed = f" 💰*(ngân sách: {pre_budget})*"
+                who_embed = f" 👤*(đi với: {_who_label(pre_who)})*"
+                return (
+                    f"🏖️ **Câu 1/1 — Phong cách** chuyến đi{trip_note}{budget_embed}{who_embed}\n\n"
+                    "1. 🌊 **Biển & nghỉ dưỡng** — tắm biển, bể bơi, spa\n"
+                    "2. 🎢 **Vui chơi giải trí** — VinWonders, Safari\n"
+                    "3. 🌟 **Cả hai** — nửa biển, nửa vui chơi\n\n"
+                    "*(Gõ số hoặc mô tả)*"
+                )
+
+            # --- budget known, need Q1 + Q3 (skip Q2) ---
+            budget_note_line = ""
+            if budget_known:
+                budget_note_line = f"\n💰*(ngân sách: {pre_budget})* ← đã ghi nhận, sẽ bỏ qua câu hỏi ngân sách"
+
             return (
-                f"🤝 **Câu 1/3 — Bạn đi với ai?**{trip_note}\n\n"
+                f"🤝 **Câu 1/3 — Bạn đi với ai?**{trip_note}{budget_note_line}\n\n"
                 "1. 👫 Cặp đôi\n"
                 "2. 👨‍👩‍👧 Gia đình (có con nhỏ)\n"
                 "3. 👥 Nhóm bạn\n"
@@ -2205,10 +2762,31 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
             )
         return None
 
-    # Q1 answered → ask Q2
+    # Q1 answered → ask Q2 (or skip if budget already embedded in Q1 message)
     if state == "waiting_q1":
         who = _extract_who(msg_norm)
         dest_id, dest_name = _extract_dest_from_history(history)
+
+        # Check if budget was already embedded in Q1 bot message
+        budget_pre = None
+        for m_hist in history:
+            if m_hist["role"] == "assistant" and _VP_MARKER_Q1 in m_hist["content"]:
+                bm = re.search(r"💰\*\(ngân sách:\s*([^)]+)\)", m_hist["content"])
+                if bm:
+                    budget_pre = bm.group(1).strip()
+                break
+
+        if budget_pre and budget_pre in ("thấp", "trung", "cao"):
+            # Skip Q2 — go straight to Q3
+            return (
+                f"🏖️ **Câu 2/2 — Phong cách** chuyến đi?\n"
+                f"*(Đi với: {_who_label(who)} · Ngân sách: {_budget_label_vp(budget_pre)})*\n\n"
+                "1. 🌊 **Biển & nghỉ dưỡng** — tắm biển, bể bơi, spa\n"
+                "2. 🎢 **Vui chơi giải trí** — VinWonders, Safari\n"
+                "3. 🌟 **Cả hai** — nửa biển, nửa vui chơi\n\n"
+                "*(Gõ số hoặc mô tả)*"
+            )
+
         return (
             f"💰 **Câu 2/3 — Ngân sách** mỗi đêm tại **{dest_name}** khoảng bao nhiêu?\n"
             f"*(Đi với: {_who_label(who)})*\n\n"
@@ -2220,7 +2798,8 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
 
     # Q2 answered → clarify if vague, else ask Q3
     if state == "waiting_q2":
-        budget = _extract_budget_vp(msg_norm)
+        days_q2 = _extract_trip_days(history, user_message)
+        budget = _extract_budget_vp(msg_norm, days_q2)
         if budget == "mơ hồ":
             return (
                 "💡 **Làm rõ ngân sách** — Bạn đang nghĩ tới tầm nào?\n\n"
@@ -2360,71 +2939,93 @@ def _rule_based_reply(user_message: str, history: List[Dict[str, str]] | None = 
 # Main entry point
 # ---------------------------------------------------------------------------
 
-async def get_travel_response(history: List[Dict[str, str]]) -> str:
-    # Vinpearl bot xử lý toàn bộ: phân loại câu hỏi, 3 chức năng, grounding LLM,
-    # điều hướng (ngoài Vinpearl / ngoài chủ đề). Dữ liệu & luật ở data/vinpearl.json.
-    from services.vinpearl_bot import respond as vinpearl_respond
-    try:
-        return await vinpearl_respond(history)
-    except Exception as e:
-        print(f"[vinpearl] fatal: {e} — fallback legacy")
-
-    return await _legacy_response(history)
+async def get_travel_response(history: List[Dict[str, str]], session_id: str = "") -> str:
+    """Public API — returns only the reply string (backward-compatible)."""
+    reply, _ = await get_travel_response_with_meta(history, session_id=session_id)
+    return reply
 
 
-async def _legacy_response(history: List[Dict[str, str]]) -> str:
-    provider = detect_provider()
-    print(f"[AI] Using provider: {provider}")
+async def get_travel_response_with_meta(
+    history: List[Dict[str, str]],
+    session_id: str = "",
+) -> tuple:
+    """
+    Returns (reply: str, meta: dict) where meta contains token counts,
+    cost, provider, model. Also persists a row to chat_logs.
 
+    Priority order:
+      1. _rule_based_reply  → Vinpearl Q&A flow, booking, city guides (chatbot.py)
+      2. vinpearl_bot       → deals, room listing, scope-guard (vinpearl_bot.py)
+      3. AI provider        → free-form questions
+    """
     last_user_msg = next(
         (m["content"] for m in reversed(history) if m["role"] == "user"), ""
     )
 
-    # ── Rule-based FIRST (Vinpearl flow, booking, city info) ──────────────────
-    # This must run before AI so DB-backed room/deal data is never bypassed.
+    # ── 1. Rule-based (Vinpearl planning Q&A, booking, etc.) ─────────────────
     rule_reply = _rule_based_reply(last_user_msg, history)
     if rule_reply:
-        return rule_reply
+        meta = _build_rule_meta(history, rule_reply)
+        _persist_chat_log(history, rule_reply, meta, session_id)
+        return rule_reply, meta
 
-    # ── AI provider (handles free-form questions rule-based can't answer) ──────
+    # ── 2. vinpearl_bot (deals list, room list, scope/redirect) ──────────────
+    from services.vinpearl_bot import respond as vinpearl_respond
     try:
+        vb_reply = await vinpearl_respond(history)
+        if vb_reply:
+            meta = _build_rule_meta(history, vb_reply)
+            _persist_chat_log(history, vb_reply, meta, session_id)
+            return vb_reply, meta
+    except Exception as e:
+        print(f"[vinpearl_bot] error: {e}")
+
+    # ── 3. AI provider ────────────────────────────────────────────────────────
+    return await _legacy_response(history, session_id=session_id)
+
+
+async def _legacy_response(history: List[Dict[str, str]], session_id: str = "") -> tuple:
+    """AI provider fallback — called only when both rule-based and vinpearl_bot return nothing."""
+    provider = detect_provider()
+    print(f"[AI] Using provider: {provider}")
+
+    # ── AI provider ────────────────────────────────────────────────────────────
+    try:
+        reply, usage = None, {}
         if provider == "openai":
-            return await _call_openai_compat(
-                history,
-                api_key=os.getenv("OPENAI_API_KEY", ""),
-                model=os.getenv("OPENAI_MODEL", "gpt-3.5-turbo"),
+            model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
+            reply, usage = await _call_openai_compat(
+                history, api_key=os.getenv("OPENAI_API_KEY", ""), model=model,
             )
-
         elif provider == "gemini":
-            return await _call_gemini(
-                history,
-                api_key=os.getenv("GEMINI_API_KEY", ""),
-                model=os.getenv("GEMINI_MODEL", "gemini-1.5-flash"),
+            model = os.getenv("GEMINI_MODEL", "gemini-1.5-flash")
+            reply, usage = await _call_gemini(
+                history, api_key=os.getenv("GEMINI_API_KEY", ""), model=model,
             )
-
         elif provider == "claude":
-            return await _call_claude(
-                history,
-                api_key=os.getenv("CLAUDE_API_KEY", ""),
-                model=os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307"),
+            model = os.getenv("CLAUDE_MODEL", "claude-3-haiku-20240307")
+            reply, usage = await _call_claude(
+                history, api_key=os.getenv("CLAUDE_API_KEY", ""), model=model,
             )
-
         elif provider == "openrouter":
-            return await _call_openai_compat(
+            model = os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")
+            reply, usage = await _call_openai_compat(
                 history,
                 api_key=os.getenv("OPENROUTER_API_KEY", ""),
-                model=os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo"),
+                model=model,
                 base_url="https://openrouter.ai/api/v1",
             )
-
         elif provider == "ollama":
+            model = os.getenv("OLLAMA_MODEL", "llama3")
             base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1"
-            return await _call_openai_compat(
-                history,
-                api_key="ollama",
-                model=os.getenv("OLLAMA_MODEL", "llama3"),
-                base_url=base_url,
+            reply, usage = await _call_openai_compat(
+                history, api_key="ollama", model=model, base_url=base_url,
             )
+
+        if reply:
+            meta = {"provider": provider, "model": model, **usage}
+            _persist_chat_log(history, reply, meta, session_id)
+            return reply, meta
 
     except Exception as e:
         print(f"[{provider}] error: {e}")
@@ -2432,17 +3033,55 @@ async def _legacy_response(history: List[Dict[str, str]]) -> str:
     # ── Final fallback ─────────────────────────────────────────────────────────
     city = _extract_city_from_history(history)
     if city:
-        return (
+        reply = (
             f"Bạn muốn tôi tư vấn thêm về **{city.title()}** không? 😊\n\n"
             "Tôi có thể giúp về: **khách sạn**, **ẩm thực**, **lịch trình**, **phương tiện di chuyển**."
         )
+    else:
+        reply = (
+            "Xin lỗi, tôi chưa hiểu câu hỏi của bạn. 😊\n\n"
+            "Tôi có thể tư vấn về:\n"
+            "🇻🇳 **Việt Nam:** Hà Nội, Đà Nẵng, Hội An, Sapa, Phú Quốc\n"
+            "🌏 **Châu Á:** Bangkok, Tokyo, Bali, Singapore\n"
+            "🌍 **Châu Âu:** Paris, Rome, Barcelona\n\n"
+            "Bạn muốn khám phá điểm đến nào?"
+        )
+    meta = _build_rule_meta(history, reply)
+    _persist_chat_log(history, reply, meta, session_id)
+    return reply, meta
 
-    return (
-        "Xin lỗi, tôi chưa hiểu câu hỏi của bạn. 😊\n\n"
-        "Tôi có thể tư vấn về:\n"
-        "🇻🇳 **Việt Nam:** Hà Nội, Đà Nẵng, Hội An, Sapa, Phú Quốc\n"
-        "🌏 **Châu Á:** Bangkok, Tokyo, Bali, Singapore\n"
-        "🌍 **Châu Âu:** Paris, Rome, Barcelona\n\n"
-        "Bạn muốn khám phá điểm đến nào?"
-    )
+
+def _build_rule_meta(history: List[Dict], reply: str) -> Dict:
+    """Build meta dict for rule-based (no real token counts — use estimates)."""
+    all_input = " ".join(m["content"] for m in history)
+    input_t  = _estimate_tokens(all_input)
+    output_t = _estimate_tokens(reply)
+    return {
+        "provider":      "rule-based",
+        "model":         "",
+        "input_tokens":  input_t,
+        "output_tokens": output_t,
+        "total_tokens":  input_t + output_t,
+        "cost_usd":      0.0,
+    }
+
+
+def _persist_chat_log(history: List[Dict], reply: str, meta: Dict, session_id: str) -> None:
+    """Write one row to chat_logs, silently ignoring DB errors."""
+    try:
+        from database import log_chat
+        last_user = next((m["content"] for m in reversed(history) if m["role"] == "user"), "")
+        log_chat({
+            "session_id":    session_id,
+            "provider":      meta.get("provider", "rule-based"),
+            "model":         meta.get("model", ""),
+            "user_message":  last_user,
+            "bot_reply":     reply,
+            "input_tokens":  meta.get("input_tokens", 0),
+            "output_tokens": meta.get("output_tokens", 0),
+            "total_tokens":  meta.get("total_tokens", 0),
+            "cost_usd":      meta.get("cost_usd", 0.0),
+        })
+    except Exception as e:
+        print(f"[chat_log] persist error (non-fatal): {e}")
 
