@@ -1250,10 +1250,11 @@ VINPEARL_DEALS: List[Dict] = [
     },
 ]
 
-_VP_MARKER_QDEST = "🌴 **Bạn muốn đến Vinpearl ở đâu?"
-_VP_MARKER_Q1 = "🤝 **Bạn đi với ai?"
+_VP_MARKER_QDEST  = "🌴 **Bạn muốn đến Vinpearl ở đâu?"
+_VP_MARKER_QDAYS  = "📅 **Chuyến đi bao nhiêu ngày?"
+_VP_MARKER_Q1     = "🤝 **Bạn đi với ai?"
 _VP_MARKER_Q1_ONLY = "🤝 **Bạn đi với ai?"   # alias kept for clarity
-_VP_MARKER_Q2 = "💰 **Ngân sách"
+_VP_MARKER_Q2     = "💰 **Ngân sách"
 _VP_MARKER_Q2C = "💡 **Làm rõ ngân sách"
 _VP_MARKER_Q3 = "🏖️ **Câu 3/3"
 _VP_MARKER_Q3_FAST1 = "🏖️ **Câu 2/2"   # fast-track after Q1 (budget pre-known)
@@ -1344,7 +1345,7 @@ def _extract_dest_from_history(history: List[Dict]) -> tuple:
         if msg["role"] != "assistant":
             continue
         c = msg["content"]
-        if _VP_MARKER_Q1 in c or _VP_MARKER_Q2 in c:
+        if _VP_MARKER_Q1 in c or _VP_MARKER_Q2 in c or _VP_MARKER_QDAYS in c:
             # Pattern: "Vinpearl XYZ" inside parentheses e.g. "(Vinpearl Phú Quốc)"
             m = re.search(r"Vinpearl\s+([^\)\*\n]+)", c)
             if m:
@@ -1392,6 +1393,8 @@ def _get_vp_state(history: List[Dict]) -> Optional[str]:
                 return "waiting_q2"
             if _VP_MARKER_Q1 in c:
                 return "waiting_q1"
+            if _VP_MARKER_QDAYS in c:
+                return "waiting_days"
             if _VP_MARKER_QDEST in c:
                 return "waiting_dest"
             break
@@ -2127,11 +2130,223 @@ _VP_ACTIVITIES_NT: Dict[str, list] = {
     ],
 }
 
-# ── Map dest_id → activity dict (add more destinations here as needed) ─────────
+# ── Nam Hội An ────────────────────────────────────────────────────────────────
+_VP_ACTIVITIES_NHA: Dict[str, list] = {
+    "biển": [
+        (
+            "Check-in {resort} *(resort nằm ngay ven biển Cẩm An — bãi cát dài, nước xanh)*",
+            "Tắm biển **Bãi Cẩm An**, bể bơi ngoài trời resort",
+            "Ăn tối **phố cổ Hội An** *(shuttle resort đưa đón ~20 phút)* — cao lầu, mì Quảng, bánh mì Phượng",
+        ),
+        (
+            "Ăn sáng buffet resort, tắm biển buổi sáng — sóng nhẹ, ít người",
+            "Tour **Cù Lao Chàm** *(di sản UNESCO, cách ~1 giờ thuyền)* — lặn ngắm san hô, hải sản tươi tại đảo",
+            "**Phố cổ Hội An về đêm** — đèn lồng lung linh, thả hoa đăng trên sông Hoài",
+        ),
+        (
+            "Spa half-day tại resort *(gói massage đá nóng 90 phút)*",
+            "Tắm biển Cẩm An, nghỉ ngơi bể bơi",
+            "Mua sắm: **đèn lồng Hội An**, áo dài may đo, đặc sản bánh in",
+        ),
+        (
+            "Tắm biển lần cuối, chụp ảnh lưu niệm",
+            "Ghé **làng rau Trà Quế** *(cách 15 phút)* — đạp xe, trồng rau, ăn trưa làng quê",
+            "Ra **sân bay Đà Nẵng** *(cách ~30 phút)*",
+        ),
+    ],
+    "vui chơi": [
+        (
+            "Check-in {resort}",
+            "**VinWonders Nam Hội An** *(ngay trong khu resort)* — công viên nước, tàu lượn, khu vui chơi trẻ em\n   💡 *Vào chiều: tránh nắng, chơi đến tối*",
+            "Ăn tối tại resort",
+        ),
+        (
+            "**VinWonders Nam Hội An** tiếp — show diễn ban đêm, phố Tây An Hội",
+            "Bể bơi resort / spa thư giãn",
+            "**Phố cổ Hội An** *(shuttle ~20 phút)* — đèn lồng, ẩm thực đặc sản",
+        ),
+        (
+            "Tour **Cù Lao Chàm** *(thuyền ~1 giờ)* — lặn ngắm san hô, snorkeling",
+            "Tắm biển Cẩm An, nghỉ ngơi",
+            "Mua sắm đèn lồng, áo dài Hội An",
+        ),
+        (
+            "Spa half-day tại resort",
+            "**Làng gốm Thanh Hà** *(cách 20 phút)* — trải nghiệm làm gốm thủ công",
+            "Ra **sân bay Đà Nẵng** *(~30 phút)*",
+        ),
+    ],
+    "cả hai": [
+        (
+            "Check-in {resort} *(ven biển Cẩm An — bãi tắm riêng, resort 5 sao)*",
+            "Tắm biển **Bãi Cẩm An**, bể bơi resort",
+            "**Phố cổ Hội An** *(shuttle ~20 phút)* — cao lầu, mì Quảng, đèn lồng",
+        ),
+        (
+            "**VinWonders Nam Hội An** (9:00–13:00) — công viên nước, tàu lượn\n   💡 *Vào sáng — chơi 4 giờ thoải mái*",
+            "Tour **Cù Lao Chàm** *(di sản UNESCO)* — lặn ngắm san hô, hải sản tươi",
+            "**Phố cổ Hội An về đêm** — thả hoa đăng, đèn lồng lung linh",
+        ),
+        (
+            "Spa half-day / tắm biển buổi sáng",
+            "**Làng rau Trà Quế** *(cách 15 phút)* — đạp xe, trồng rau, ăn trưa",
+            "Mua sắm: đèn lồng, áo dài may đo, đặc sản Hội An",
+        ),
+        (
+            "Tắm biển lần cuối, chụp ảnh",
+            "**Làng gốm Thanh Hà** *(cách 20 phút)* — làm gốm thủ công",
+            "Ra **sân bay Đà Nẵng** *(~30 phút taxi)*",
+        ),
+    ],
+}
+
+# ── Cửa Hội (Nghệ An) ─────────────────────────────────────────────────────────
+_VP_ACTIVITIES_CH: Dict[str, list] = {
+    "biển": [
+        (
+            "Check-in {resort} *(bãi biển Cửa Hội — yên tĩnh, ít khách du lịch, sóng êm)*",
+            "Tắm biển **Bãi Cửa Hội**, bể bơi resort, nghỉ ngơi thư giãn",
+            "Ăn tối hải sản địa phương: cá thu, tôm hùm, ghẹ Cửa Lò *(ẩm thực Nghệ An đặc sắc)*",
+        ),
+        (
+            "Ăn sáng buffet resort, tắm biển buổi sáng — nước trong xanh",
+            "**Cửa Lò** *(cách 10 phút)* — bãi biển nổi tiếng nhất Nghệ An, đi dạo phố biển",
+            "**Chợ Vinh** *(cách 20 phút)* — thịt bò Nghệ An, tương bần, đặc sản miền Trung",
+        ),
+        (
+            "Spa half-day tại resort",
+            "Tour **đảo Ngư, đảo Lan Châu** *(từ cảng Cửa Hội ~30 phút)* — cảnh quan thiên nhiên hoang sơ",
+            "**Phố đêm Vinh** *(cách 20 phút)* — cháo lươn, bún bò Nghệ, bia hơi Sài Gòn",
+        ),
+        (
+            "Tắm biển lần cuối, chụp ảnh lưu niệm",
+            "Mua đặc sản: **tương Nam Đàn**, kẹo cu đơ, nhút Thanh Chương",
+            "Ra **sân bay Vinh** *(cách 20 phút)*",
+        ),
+    ],
+    "vui chơi": [
+        (
+            "Check-in {resort}",
+            "Tắm biển Cửa Hội, bể bơi resort",
+            "**Phố đêm Vinh** *(cách 20 phút)* — cháo lươn, bún bò Nghệ, ẩm thực đặc trưng",
+        ),
+        (
+            "Tour **đảo Ngư** *(cảng Cửa Hội, ~30 phút)* — ngắm cảnh, câu cá, picnic biển",
+            "Bể bơi resort / spa",
+            "**Chợ đêm Vinh** — mua sắm đặc sản, ẩm thực đường phố",
+        ),
+        (
+            "Tắm biển **Cửa Lò** *(cách 10 phút)* — bãi biển nổi tiếng Nghệ An",
+            "**Làng Sen — Kim Liên** *(quê Bác Hồ, cách 20 phút)* — tham quan di tích lịch sử",
+            "Ăn tối hải sản Cửa Lò — tôm, ghẹ, cá thu tươi sống",
+        ),
+        (
+            "Spa half-day tại resort",
+            "Mua đặc sản: tương Nam Đàn, kẹo cu đơ, nhút",
+            "Ra **sân bay Vinh** *(cách 20 phút)*",
+        ),
+    ],
+    "cả hai": [
+        (
+            "Check-in {resort} *(biển Cửa Hội — yên tĩnh, trong xanh)*",
+            "Tắm biển **Bãi Cửa Hội**, bể bơi resort",
+            "**Phố đêm Vinh** *(cách 20 phút)* — cháo lươn, bún bò Nghệ An đặc sản",
+        ),
+        (
+            "Tour **đảo Ngư** *(~30 phút từ cảng Cửa Hội)* — câu cá, snorkeling, hải sản tươi",
+            "**Cửa Lò** *(cách 10 phút)* — bãi biển rộng lớn, dạo phố biển",
+            "Ăn tối hải sản địa phương: ghẹ hấp, tôm hùm, cá thu nướng",
+        ),
+        (
+            "Spa half-day / tắm biển buổi sáng",
+            "**Làng Sen Kim Liên** *(quê Bác Hồ, cách 20 phút)* — tham quan di tích",
+            "**Chợ Vinh** — mua tương Nam Đàn, kẹo cu đơ, đặc sản Nghệ An",
+        ),
+        (
+            "Tắm biển lần cuối, chụp ảnh",
+            "Mua đặc sản Nghệ An về làm quà",
+            "Ra **sân bay Vinh** *(cách 20 phút taxi)*",
+        ),
+    ],
+}
+
+# ── Hải Phòng (Đảo Vũ Yên / Cát Bà) ──────────────────────────────────────────
+_VP_ACTIVITIES_HP: Dict[str, list] = {
+    "biển": [
+        (
+            "Check-in {resort} *(Đảo Vũ Yên — đón phà từ bến Bính ~20 phút, view Vịnh Hạ Long)*",
+            "Tắm biển resort Vũ Yên, bể bơi ngoài trời, nghỉ ngơi",
+            "Ăn tối hải sản Hải Phòng: cua biển, ngao, tôm tươi ngon *(nhà hàng resort)*",
+        ),
+        (
+            "Ăn sáng buffet resort, tắm biển sáng sớm — nước trong, sóng nhỏ",
+            "Tour **Cát Bà** *(cách ~30 phút tàu cao tốc)* — bãi biển hoang sơ, leo núi Ngự Lâm",
+            "**Phố cảng Hải Phòng** *(phà từ Vũ Yên ~20 phút)* — bánh đa cua, bún cua đặc sản",
+        ),
+        (
+            "Spa half-day tại resort",
+            "**Vườn quốc gia Cát Bà** *(cách 30 phút tàu)* — trekking rừng nguyên sinh, ngắm cảnh vịnh",
+            "Ăn tối **bánh đa cua Hải Phòng**, nem cua bể — đặc sản số 1",
+        ),
+        (
+            "Tắm biển lần cuối, chụp ảnh view Vịnh Hạ Long từ Vũ Yên",
+            "Mua đặc sản: **bánh đa cua khô**, nem cua bể, hải sản sấy khô",
+            "Ra **sân bay Cát Bi** *(phà + taxi ~45 phút)* hoặc cảng tàu",
+        ),
+    ],
+    "vui chơi": [
+        (
+            "Check-in {resort} *(Đảo Vũ Yên, đón phà từ bến Bính ~20 phút)*",
+            "**VinWonders Hải Phòng** *(ngay trong khu resort Vũ Yên)* — công viên giải trí, khu vui chơi trẻ em\n   💡 *Vào chiều: tránh nắng, chơi đến tối*",
+            "Ăn tối resort, xem show nghệ thuật",
+        ),
+        (
+            "**VinWonders Hải Phòng** tiếp — khu vui chơi, show diễn ban đêm",
+            "Bể bơi resort / spa thư giãn",
+            "**Phố cảng Hải Phòng** *(phà ~20 phút)* — ẩm thực đường phố đặc sắc",
+        ),
+        (
+            "Tour **Cát Bà** *(tàu cao tốc ~30 phút)* — Vườn Quốc gia, kayak vịnh",
+            "Tắm biển resort, nghỉ ngơi",
+            "**Chợ đêm Hải Phòng** — hải sản tươi, bánh đa cua",
+        ),
+        (
+            "Spa half-day tại resort",
+            "Mua đặc sản: bánh đa cua, nem cua bể, hải sản khô Cát Bà",
+            "Ra **sân bay Cát Bi** *(phà + taxi ~45 phút)*",
+        ),
+    ],
+    "cả hai": [
+        (
+            "Check-in {resort} *(Đảo Vũ Yên — view Vịnh Hạ Long hùng vĩ)*",
+            "Tắm biển resort **Vũ Yên**, bể bơi ngoài trời",
+            "**Phố cảng Hải Phòng** *(phà ~20 phút)* — bánh đa cua, nem cua bể đặc sản",
+        ),
+        (
+            "**VinWonders Hải Phòng** (9:00–13:00) — công viên giải trí ngay trong resort\n   💡 *Vào sáng — chơi 4 giờ thoải mái*",
+            "Tour **Cát Bà** *(tàu cao tốc ~30 phút)* — Vườn Quốc gia, bãi biển hoang sơ, kayak",
+            "Ăn tối hải sản Hải Phòng: cua biển, tôm, ngao tươi",
+        ),
+        (
+            "Spa half-day / tắm biển buổi sáng — view Vịnh Hạ Long từ resort",
+            "**Vườn quốc gia Cát Bà** *(trekking rừng nguyên sinh, cách 30 phút tàu)*",
+            "**Chợ đêm Hải Phòng** — ẩm thực đường phố, mua sắm đặc sản",
+        ),
+        (
+            "Tắm biển lần cuối, chụp ảnh view vịnh",
+            "Mua đặc sản: bánh đa cua khô, nem cua bể, hải sản sấy Cát Bà",
+            "Ra **sân bay Cát Bi** *(phà + taxi ~45 phút)*",
+        ),
+    ],
+}
+
+# ── Map dest_id → activity dict ───────────────────────────────────────────────
 _VP_ACTIVITIES_BY_DEST: Dict[int, Dict[str, list]] = {
-    1: _VP_ACTIVITIES,       # Phú Quốc
-    2: _VP_ACTIVITIES_NT,    # Nha Trang
-    # 3: _VP_ACTIVITIES_NHA  # Nam Hội An (future)
+    1: _VP_ACTIVITIES,        # Phú Quốc
+    2: _VP_ACTIVITIES_NT,     # Nha Trang
+    3: _VP_ACTIVITIES_NHA,    # Nam Hội An
+    4: _VP_ACTIVITIES_CH,     # Cửa Hội
+    5: _VP_ACTIVITIES_HP,     # Hải Phòng
 }
 
 _VP_EXTRA_DAY_BY_DEST: Dict[int, tuple] = {
@@ -3078,12 +3293,12 @@ def _tool_router(user_message: str, history: List[Dict[str, str]] | None = None)
 
     # ── Planning flow ──────────────────────────────────────────────────────
     _is_planning = _is_vp_planning_intent(msg) or state in (
-        "waiting_dest", "waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"
+        "waiting_dest", "waiting_days", "waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"
     )
     if _is_planning:
         # Resolve destination — check if explicitly mentioned
         _dest_known = any(k in msg for k in _VP_DEST_MAP)
-        if state in ("waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"):
+        if state in ("waiting_days", "waiting_q1", "waiting_q2", "waiting_clarify", "waiting_q3"):
             dest_id, dest_name = _extract_dest_from_history(history)
         elif state == "waiting_dest":
             # User just answered the destination question
@@ -3091,10 +3306,16 @@ def _tool_router(user_message: str, history: List[Dict[str, str]] | None = None)
             if not _dest_known:
                 # Still no recognizable destination
                 return dispatch_tool("get_destinations", {})
-            # destination now known → ask who next
+            # Destination known → ask "how many days?" next
+            return (
+                f"📅 **Chuyến đi bao nhiêu ngày?** *(Vinpearl {dest_name})*\n\n"
+                "Ví dụ: 2 ngày, 3 ngày, 5 ngày... *(tối đa 14 ngày)*"
+            )
+        elif state == "waiting_days":
+            # User just answered "how many days" → ask "who" next
             days = max(1, min(_extract_trip_days(history, user_message) or 2, 14))
             return (
-                f"🤝 **Bạn đi với ai?** *(Vinpearl {dest_name})*\n\n"
+                f"🤝 **Bạn đi với ai?** *(Vinpearl {dest_name} · {days} ngày)*\n\n"
                 "1. 👫 Cặp đôi\n"
                 "2. 👨‍👩‍👧 Gia đình (có con nhỏ)\n"
                 "3. 👥 Nhóm bạn\n"

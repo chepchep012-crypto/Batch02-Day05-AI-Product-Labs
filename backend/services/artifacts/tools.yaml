@@ -58,22 +58,27 @@ tools:
 
   - name: get_promotions
     description: >
-      Lấy danh sách ưu đãi / khuyến mãi Vinpearl đang áp dụng tại điểm đến.
-      Gọi khi user hỏi "ưu đãi gì", "khuyến mãi", "deal", "giảm giá".
+      Lấy danh sách ưu đãi / khuyến mãi Vinpearl đang áp dụng.
+      Gọi NGAY khi user hỏi "ưu đãi gì", "khuyến mãi", "deal", "giảm giá" —
+      KHÔNG cần hỏi thêm thông tin, KHÔNG gọi get_destinations trước.
+      destination_id=0 (mặc định) = tất cả điểm đến.
+      Chỉ truyền destination_id cụ thể khi user đã nói rõ điểm đến.
     parameters:
       type: object
       properties:
         destination_id:
           type: integer
-          description: "1=Phú Quốc, 2=Nha Trang, 3=Nam Hội An, 4=Cửa Hội, 5=Hải Phòng"
-      required: [destination_id]
+          default: 0
+          description: "0=tất cả, 1=Phú Quốc, 2=Nha Trang, 3=Nam Hội An, 4=Cửa Hội, 5=Hải Phòng"
+      required: []
 
   - name: build_itinerary
     description: >
       Xây dựng lịch trình Vinpearl hoàn chỉnh: timeline theo ngày, gợi ý phòng tốt nhất,
       bảng so sánh ≥5 phòng, ưu đãi và chi phí ước tính.
-      CHỈ gọi khi đã có ĐỦ 4 thông tin: điểm đến + số ngày + who + budget_tier.
-      KHÔNG tự đoán who hay budget_tier — phải hỏi user bằng clarify trước.
+      ⚠️ CHỈ gọi khi user đã TỰ XÁC NHẬN ĐỦ 4 thông tin: điểm đến + số ngày + who + budget_tier.
+      ⚠️ TUYỆT ĐỐI KHÔNG tự đoán who hay budget_tier dù có vẻ hiển nhiên.
+      ⚠️ Nếu chưa hỏi đủ → gọi clarify hỏi từng cái còn thiếu theo thứ tự: days → who → budget_tier.
     parameters:
       type: object
       properties:
