@@ -2920,6 +2920,89 @@ def _handle_vp_planning(user_message: str, history: List[Dict]) -> Optional[str]
     return None
 
 
+def _handle_vp_customize(user_message: str, history: List[Dict]) -> Optional[str]:
+    """Handle itinerary customisation requests (state: result_shown / waiting_customize)."""
+    msg_norm = _normalize(user_message)
+    days = _extract_trip_days(history)
+    dest_id, dest_name = _extract_dest_from_history(history)
+    who = _extract_who_from_history(history)
+    budget = _extract_budget_from_history_vp(history)
+    all_rooms = _get_all_dest_rooms(dest_id)
+
+    def _cur_style() -> str:
+        for m in reversed(history):
+            if m["role"] == "assistant" and _VP_MARKER_RESULT in m["content"]:
+                c = m["content"]
+                if "biển & nghỉ dưỡng" in c.lower():
+                    return "biển"
+                if "vui chơi" in c[:500].lower():
+                    return "vui chơi"
+        return "cả hai"
+
+    # Style shortcuts (menu 3 / 4)
+    if msg_norm.strip() == "3" or any(k in msg_norm for k in ["thích biển", "biển hơn", "nghỉ dưỡng hơn"]):
+        return dispatch_tool("build_itinerary", {
+            "destination_id": dest_id, "destination_name": dest_name,
+            "days": days, "who": who, "budget_tier": budget, "style": "biển",
+        })
+
+    if msg_norm.strip() == "4" or any(k in msg_norm for k in ["vui chơi hơn", "vinwonders hơn", "thêm vinwonders"]):
+        return dispatch_tool("build_itinerary", {
+            "destination_id": dest_id, "destination_name": dest_name,
+            "days": days, "who": who, "budget_tier": budget, "style": "vui chơi",
+        })
+
+    # Book / confirm (menu 6)
+    if msg_norm.strip() == "6" or any(k in msg_norm for k in [
+        "giữ nguyên", "giu nguyen", "không đổi", "ok", "được rồi", "duoc roi", "ổn rồi",
+    ]):
+        return _format_vp_contact_form(_extract_vp_booking_context(history))
+
+    # Room switch (menu 1 / room name / index)
+    room_switched = _try_switch_room(msg_norm, all_rooms, who, budget, nights=max(1, days - 1))
+    if room_switched:
+        style = _cur_style()
+        deal = _find_vp_deal(room_switched, dest_id)
+        return _build_vp_timeline(who, style, room_switched, deal, days, dest_name, dest_id, all_rooms, budget)
+
+    # Day change (menu 2)
+    new_days = _try_extract_day_change(msg_norm, days)
+    if new_days and new_days != days:
+        style = _cur_style()
+        room = _find_vp_room(who, budget, style, dest_id)
+        deal = _find_vp_deal(room, dest_id)
+        return _build_vp_timeline(who, style, room, deal, new_days, dest_name, dest_id, all_rooms, budget)
+
+    # Activity change (menu 5)
+    if any(k in msg_norm for k in ["đổi hoạt động", "thay hoạt động", "ngày ", "buổi ",
+                                    "doi hoat dong", "thay hoat dong", "ngay ", "buoi "]):
+        return _handle_activity_change_request(msg_norm, history, who, budget, days, dest_id, dest_name, all_rooms)
+
+    # Numbered menu prompts
+    if msg_norm.strip() == "1":
+        return (
+            f"{_MARKER_VP_CUSTOMIZE} — đổi phòng?**\n\n"
+            "Gõ **số thứ tự** hoặc **tên phòng** từ bảng so sánh.\n"
+            "*(Ví dụ: 'đổi sang phòng 3' hoặc 'Family Deluxe')*"
+        )
+    if msg_norm.strip() == "2":
+        return (
+            f"{_MARKER_VP_CUSTOMIZE} — số ngày?**\n\n"
+            f"Hiện tại: **{days} ngày**. Bạn muốn thay đổi thế nào?\n"
+            "*(Gõ: 'thêm 1 ngày', 'rút còn 3 ngày', hoặc số ngày cụ thể)*"
+        )
+    if msg_norm.strip() == "5":
+        return (
+            f"{_MARKER_VP_CUSTOMIZE} — đổi hoạt động?**\n\n"
+            "Cho tôi biết bạn muốn thay gì:\n"
+            "- *'ngày 2 buổi chiều đổi sang spa'*\n"
+            "- *'thêm hoạt động kayak ngày 3'*\n"
+            "*(Mô tả tự do — tôi sẽ cập nhật lịch trình)*"
+        )
+
+    return None
+
+
 def _tool_router(user_message: str, history: List[Dict[str, str]] | None = None) -> str | None:
     """
     Deterministic router — handles state & intent detection, then delegates
@@ -3120,14 +3203,15 @@ def dispatch_tool(name: str, args: dict) -> str:
     try:
         if name == "get_destinations":
             return (
-                "Vinpearl có 5 điểm đến:\n"
-                "| ID | Điểm đến | Nổi bật |\n"
-                "|:---:|---|---|\n"
-                "| 1 | 🏝️ Phú Quốc | Đảo ngọc, VinWonders, Safari, resort cao cấp |\n"
-                "| 2 | 🌊 Nha Trang | Biển đẹp, VinWonders, hải sản tươi |\n"
-                "| 3 | 🏖️ Nam Hội An | Vui chơi ven biển, cách phố cổ 30 phút |\n"
-                "| 4 | 🌅 Cửa Hội (Nghệ An) | Biển yên tĩnh, gần thành phố Vinh |\n"
-                "| 5 | ⚓ Hải Phòng | Đảo Cát Bà, cảng biển, ẩm thực phong phú |"
+                "VinBot hỗ trợ 5 điểm đến Vinpearl:\n\n"
+                "| # | Điểm đến | Từ khoá nhận diện | Nổi bật |\n"
+                "|:---:|---|---|---|\n"
+                "| 1 | 🏝️ **Phú Quốc** | phú quốc, phu quoc | Đảo ngọc, VinWonders, Safari, resort cao cấp |\n"
+                "| 2 | 🌊 **Nha Trang** | nha trang | Biển đẹp, VinWonders, hải sản tươi |\n"
+                "| 3 | 🏖️ **Nam Hội An** | **hội an**, hoi an, nam hội an | Vui chơi ven biển, cách phố cổ Hội An 30 phút |\n"
+                "| 4 | 🌅 **Cửa Hội** | cửa hội, nghệ an, vinh | Biển yên tĩnh, gần thành phố Vinh |\n"
+                "| 5 | ⚓ **Hải Phòng** | hải phòng, cát bà | Đảo Cát Bà, cảng biển, ẩm thực phong phú |\n\n"
+                "Bạn muốn đến điểm nào? Gõ tên hoặc số thứ tự."
             )
 
         if name == "get_rooms":
