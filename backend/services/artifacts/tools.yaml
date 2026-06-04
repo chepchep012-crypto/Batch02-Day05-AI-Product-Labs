@@ -1,0 +1,137 @@
+tools:
+
+  - name: clarify
+    description: >
+      Hỏi user một câu khi thiếu thông tin bắt buộc. Dùng khi chưa biết điểm đến, số người đi,
+      hoặc ngân sách. Luôn truyền response_type phù hợp.
+    parameters:
+      type: object
+      properties:
+        question:
+          type: string
+          description: "Câu hỏi cụ thể cần hỏi user"
+        response_type:
+          type: string
+          enum: [text, yes_no, choice]
+          default: text
+          description: "'text' cho thông tin tự do, 'yes_no' cho xác nhận, 'choice' cho lựa chọn"
+        options:
+          type: array
+          items: {type: string}
+          default: []
+          description: "Danh sách lựa chọn (chỉ dùng khi response_type=choice)"
+      required: [question, response_type]
+
+  - name: get_destinations
+    description: >
+      Trả về danh sách 5 điểm đến Vinpearl mà VinBot hỗ trợ.
+      Gọi khi user hỏi "đi đâu", "có những nơi nào", "điểm đến nào" hoặc khi cần nhắc user chọn điểm đến.
+    parameters:
+      type: object
+      properties: {}
+      required: []
+
+  - name: get_rooms
+    description: >
+      Lấy danh sách phòng Vinpearl tại một điểm đến, lọc theo đối tượng, ngân sách, phong cách.
+      Trả về bảng so sánh ≥5 loại phòng. Gọi khi user hỏi "phòng nào phù hợp",
+      "tư vấn phòng", "so sánh phòng", "khu phòng".
+    parameters:
+      type: object
+      properties:
+        destination_id:
+          type: integer
+          description: "1=Phú Quốc, 2=Nha Trang, 3=Nam Hội An, 4=Cửa Hội, 5=Hải Phòng"
+        who:
+          type: string
+          enum: [solo, couple, family, group]
+          description: "solo=1 mình, couple=cặp đôi, family=gia đình, group=nhóm bạn"
+        budget_tier:
+          type: string
+          enum: [thấp, trung, cao]
+          description: "thấp <3tr/đêm, trung 3–6tr/đêm, cao >6tr/đêm"
+        style:
+          type: string
+          enum: [biển, vui chơi, cả hai]
+          default: "cả hai"
+      required: [destination_id]
+
+  - name: get_promotions
+    description: >
+      Lấy danh sách ưu đãi / khuyến mãi Vinpearl đang áp dụng tại điểm đến.
+      Gọi khi user hỏi "ưu đãi gì", "khuyến mãi", "deal", "giảm giá".
+    parameters:
+      type: object
+      properties:
+        destination_id:
+          type: integer
+          description: "1=Phú Quốc, 2=Nha Trang, 3=Nam Hội An, 4=Cửa Hội, 5=Hải Phòng"
+      required: [destination_id]
+
+  - name: build_itinerary
+    description: >
+      Xây dựng lịch trình Vinpearl hoàn chỉnh: timeline theo ngày, gợi ý phòng tốt nhất,
+      bảng so sánh ≥5 phòng, ưu đãi và chi phí ước tính.
+      CHỈ gọi khi đã có ĐỦ 4 thông tin: điểm đến + số ngày + who + budget_tier.
+      KHÔNG tự đoán who hay budget_tier — phải hỏi user bằng clarify trước.
+    parameters:
+      type: object
+      properties:
+        destination_id:
+          type: integer
+          description: "1=Phú Quốc, 2=Nha Trang, 3=Nam Hội An, 4=Cửa Hội, 5=Hải Phòng"
+        destination_name:
+          type: string
+          description: "Tên hiển thị, vd: 'Phú Quốc', 'Nha Trang'"
+        days:
+          type: integer
+          description: "Số ngày (1–14)"
+        who:
+          type: string
+          enum: [solo, couple, family, group]
+          description: "BẮT BUỘC hỏi user — KHÔNG tự đoán"
+        budget_tier:
+          type: string
+          enum: [thấp, trung, cao]
+          description: "BẮT BUỘC hỏi user — KHÔNG tự đoán"
+        style:
+          type: string
+          enum: [biển, vui chơi, cả hai]
+          default: "cả hai"
+          description: "Phong cách chuyến đi (tuỳ chọn)"
+      required: [destination_id, destination_name, days, who, budget_tier]
+
+  - name: submit_booking
+    description: >
+      Lưu yêu cầu đặt lịch vào database và thông báo CSKH qua Telegram.
+      Chỉ gọi khi user đã cung cấp ĐỦ: họ tên + số điện thoại + email.
+    parameters:
+      type: object
+      properties:
+        guest_name:
+          type: string
+          description: "Họ tên đầy đủ"
+        phone:
+          type: string
+          description: "Số điện thoại"
+        email:
+          type: string
+          description: "Email"
+        destination_name:
+          type: string
+        room_type:
+          type: string
+        resort_name:
+          type: string
+          default: "Vinpearl"
+        checkin:
+          type: string
+          description: "dd/mm/yyyy, bỏ trống nếu chưa biết"
+        checkout:
+          type: string
+        num_guests:
+          type: integer
+          default: 2
+        notes:
+          type: string
+      required: [guest_name, phone, email, destination_name]

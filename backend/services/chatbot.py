@@ -3424,52 +3424,118 @@ async def _call_with_tools(
     return "Xin lỗi, đã xảy ra lỗi xử lý yêu cầu của bạn.", {}
 
 
+def _calc_cost_from_usage(model: str, usage: dict) -> float:
+    return _calc_cost(model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0))
+
+
+async def _call_with_tools_claude(
+    history: List[Dict[str, str]],
+    model: str = "claude-3-haiku-20240307",
+) -> tuple:
+    """
+    Tool-calling loop using Anthropic Claude's native tool_use API.
+    Returns (final_reply, usage_dict).
+    """
+    import json
+    import anthropic
+    from services.tools import VINBOT_TOOLS, VINBOT_SYSTEM_PROMPT
+
+    # Convert OpenAI-style tool schema → Anthropic tool schema
+    claude_tools = []
+    for t in VINBOT_TOOLS:
+        fn = t["function"]
+        claude_tools.append({
+            "name": fn["name"],
+            "description": fn["description"],
+            "input_schema": fn["parameters"],
+        })
+
+    client = anthropic.AsyncAnthropic(api_key=os.getenv("CLAUDE_API_KEY", ""))
+    messages: List[Dict] = []
+    for m in history:
+        messages.append({"role": m["role"], "content": m["content"]})
+
+    total_in = 0
+    total_out = 0
+
+    for _iteration in range(6):
+        response = await client.messages.create(
+            model=model,
+            max_tokens=2500,
+            system=VINBOT_SYSTEM_PROMPT,
+            tools=claude_tools,
+            messages=messages,
+        )
+        total_in  += response.usage.input_tokens
+        total_out += response.usage.output_tokens
+
+        tool_uses   = [b for b in response.content if b.type == "tool_use"]
+        text_blocks = [b for b in response.content if b.type == "text"]
+
+        if not tool_uses:
+            reply = text_blocks[0].text if text_blocks else ""
+            return reply.strip(), {
+                "input_tokens":  total_in,
+                "output_tokens": total_out,
+                "total_tokens":  total_in + total_out,
+                "cost_usd":      _calc_cost(model, total_in, total_out),
+            }
+
+        messages.append({"role": "assistant", "content": response.content})
+
+        tool_results = []
+        for tu in tool_uses:
+            result = dispatch_tool(tu.name, tu.input)
+            tool_results.append({
+                "type": "tool_result",
+                "tool_use_id": tu.id,
+                "content": result,
+            })
+        messages.append({"role": "user", "content": tool_results})
+
+    return "Xin lỗi, đã xảy ra lỗi xử lý yêu cầu.", {}
+
+
 async def get_travel_response_with_meta(
     history: List[Dict[str, str]],
     session_id: str = "",
 ) -> tuple:
     """
-    Returns (reply: str, meta: dict) where meta contains token counts,
-    cost, provider, model. Also persists a row to chat_logs.
-
-    Priority order:
-      1. Tool-calling (OpenAI / OpenRouter)  — primary when provider supports tools
-      2. Rule-based fallback                 — when no tool-supporting provider
-      3. Plain AI (Gemini / Claude)          — for free-form questions
+    Pure agent architecture — follows Day04 lab pattern.
+    ALL providers use the tool-calling agent (providers/ + tools/ + agent.py).
+    Falls back to rule-based only if agent completely fails.
     """
-    provider = detect_provider()
+    from services.agent import run_vinbot_agent
+    from services.providers import detect_provider_name
 
-    # ── 1. Tool-calling: OpenAI / OpenRouter (full tool support) ─────────────
-    if provider in ("openai", "openrouter", "ollama"):
-        try:
-            if provider == "openai":
-                model = os.getenv("OPENAI_MODEL", "gpt-3.5-turbo")
-                reply, usage = await _call_with_tools(
-                    history, api_key=os.getenv("OPENAI_API_KEY", ""), model=model,
-                )
-            elif provider == "openrouter":
-                model = os.getenv("OPENROUTER_MODEL", "openai/gpt-3.5-turbo")
-                reply, usage = await _call_with_tools(
-                    history,
-                    api_key=os.getenv("OPENROUTER_API_KEY", ""),
-                    model=model,
-                    base_url="https://openrouter.ai/api/v1",
-                )
-            else:  # ollama
-                model = os.getenv("OLLAMA_MODEL", "llama3")
-                base_url = os.getenv("OLLAMA_BASE_URL", "http://localhost:11434") + "/v1"
-                reply, usage = await _call_with_tools(
-                    history, api_key="ollama", model=model, base_url=base_url,
-                )
+    provider_name = detect_provider_name()
+    model_env = {
+        "openai":      os.getenv("OPENAI_MODEL",      "gpt-4o-mini"),
+        "openrouter":  os.getenv("OPENROUTER_MODEL",  "openai/gpt-4o-mini"),
+        "gemini":      os.getenv("GEMINI_MODEL",       "gemini-1.5-flash"),
+        "claude":      os.getenv("CLAUDE_MODEL",       "claude-3-haiku-20240307"),
+        "ollama":      os.getenv("OLLAMA_MODEL",       "llama3"),
+    }
+    model = model_env.get(provider_name, "unknown")
 
-            if reply:
-                meta = {"provider": provider, "model": model, **usage}
-                _persist_chat_log(history, reply, meta, session_id)
-                return reply, meta
-        except Exception as e:
-            print(f"[tool-calling/{provider}] error: {e} — falling back to rule-based")
+    result = await run_vinbot_agent(history, provider_name, model)
 
-    # ── 2. Rule-based fallback (no tool-supporting provider configured) ───────
+    reply = result.get("assistant_text", "")
+    if reply and result.get("status") != "error":
+        usage = result.get("usage", {})
+        meta = {
+            "provider":       provider_name,
+            "model":          result.get("model", model),
+            "input_tokens":   usage.get("prompt_tokens", 0),
+            "output_tokens":  usage.get("completion_tokens", 0),
+            "total_tokens":   usage.get("total_tokens", 0),
+            "cost_usd":       _calc_cost(model, usage.get("prompt_tokens", 0), usage.get("completion_tokens", 0)),
+        }
+        _persist_chat_log(history, reply, meta, session_id)
+        return reply, meta
+
+    # ── Emergency fallback: rule-based (only when agent completely fails) ──────
+    print(f"[agent] failed (status={result.get('status')}), falling back to rule-based")
     last_user_msg = next(
         (m["content"] for m in reversed(history) if m["role"] == "user"), ""
     )
@@ -3479,7 +3545,6 @@ async def get_travel_response_with_meta(
         _persist_chat_log(history, rule_reply, meta, session_id)
         return rule_reply, meta
 
-    # ── 3. Plain AI (Gemini / Claude) or final fallback ───────────────────────
     return await _legacy_response(history, session_id=session_id)
 
 
